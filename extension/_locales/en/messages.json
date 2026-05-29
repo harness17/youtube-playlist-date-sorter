@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "YouTube Playlist Date Sorter",
+    "description": "Extension name shown in the Chrome Web Store and extension manager"
+  },
+  "extDescription": {
+    "message": "Sort visible YouTube playlist playback by video publish date and jump to the next video in that order.",
+    "description": "Short description shown in the Chrome Web Store and extension manager"
+  },
+  "actionTitle": {
+    "message": "Playlist Date Sorter",
+    "description": "Toolbar icon tooltip"
+  }
+}
