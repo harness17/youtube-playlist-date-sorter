@@ -7,7 +7,7 @@ YouTube のプレイリストページとプレイリスト再生ページで、
 1. `chrome://extensions/` を開く
 2. デベロッパーモードをオン
 3. `.\scripts\package-release.ps1 -Target chrome` を実行
-4. 「パッケージ化されていない拡張機能を読み込む」で `dist/chrome/youtube-playlist-date-sorter-chrome-v0.1.1` を選択
+4. 「パッケージ化されていない拡張機能を読み込む」で `dist/chrome/youtube-playlist-date-sorter-chrome-v0.1.2` を選択
 5. `https://www.youtube.com/playlist?list=...` または `https://www.youtube.com/watch?...&list=...` を開く
 6. 右下の「並び替え」を押す
 7. プレイリスト表示が投稿日順に並び替わる

@@ -29,6 +29,8 @@
       defaultProgress: '処理中',
       waitingPhase: 'プレイリスト項目を待機中',
       waitingStatus: 'プレイリスト項目を待っています...',
+      loadingPhase: '全ての項目を読み込み中',
+      loadingStatus: '全ての項目を読み込んでいます...',
       noItems: 'プレイリスト項目を検出できません。右側リストの読み込み後に再実行してください。',
       fetchingPhase: '投稿日を取得中',
       fetchingStatus(total, completed) {
@@ -53,6 +55,9 @@
       },
       noNext: '投稿日順リストの末尾、または現在動画がリスト外です。',
       nativeRestored: 'YouTubeの通常順に戻しました。',
+      truncated(max) {
+        return ` 上限${max}件まで処理しました。`;
+      },
     },
     en: {
       title: 'Publish-date playlist',
@@ -73,6 +78,8 @@
       defaultProgress: 'Working',
       waitingPhase: 'Waiting for playlist items',
       waitingStatus: 'Waiting for playlist items...',
+      loadingPhase: 'Loading all items',
+      loadingStatus: 'Loading all playlist items...',
       noItems: 'No playlist items found. Try again after the side list loads.',
       fetchingPhase: 'Fetching publish dates',
       fetchingStatus(total, completed) {
@@ -97,6 +104,9 @@
       },
       noNext: 'This is the end of the publish-date list, or the current video is outside the list.',
       nativeRestored: 'Restored YouTube default order.',
+      truncated(max) {
+        return ` Processed up to the ${max}-item limit.`;
+      },
     },
   };
 

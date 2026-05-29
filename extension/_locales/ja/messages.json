@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "YouTube Playlist Date Sorter",
+    "description": "Chrome Web Store と拡張管理画面に表示する拡張名"
+  },
+  "extDescription": {
+    "message": "YouTube のプレイリスト再生を動画投稿日順に並び替えて、次の動画へ移動します。",
+    "description": "Chrome Web Store と拡張管理画面に表示する短い説明"
+  },
+  "actionTitle": {
+    "message": "Playlist Date Sorter",
+    "description": "ツールバーアイコンのツールチップ"
+  }
+}

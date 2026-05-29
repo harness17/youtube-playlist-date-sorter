@@ -3,9 +3,16 @@
   const i18n = window.__YT_PDS_I18N__;
   if (!sorter || !i18n) return;
 
-  const MAX_ITEMS = 120;
+  const MAX_ITEMS = 300;
   const FETCH_CONCURRENCY = 4;
+  const LOAD_ALL_TIMEOUT_MS = 20000;
+  const LOAD_ALL_STABLE_TICKS = 3;
+  const LOAD_ALL_STEP_MS = 400;
+  const REORDER_THRASH_WINDOW_MS = 3000;
+  const REORDER_THRASH_LIMIT = 5;
   const SETTINGS_KEY = 'ytpds:settings';
+  const PLAYLIST_ROW_SELECTOR =
+    'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer';
   const state = {
     order: 'asc',
     language: 'ja',
@@ -24,6 +31,7 @@
     visualObserver: null,
     visualObserverRoot: null,
     visualApplyTimer: 0,
+    savedOrderApplyTimers: [],
     applyingVisualOrder: false,
     restoredPlaylistId: '',
     badgesEnabled: false,
@@ -32,6 +40,9 @@
     statusRenderer: null,
     panelObserver: null,
     panelRemovalTimer: 0,
+    reorderTimestamps: [],
+    reorderGaveUp: false,
+    truncatedTo: 0,
   };
 
   function isPlaylistWatchPage() {
@@ -208,6 +219,8 @@
         return;
       }
       if (state.sortedItems.length > 0) {
+        state.reorderGaveUp = false;
+        state.reorderTimestamps = [];
         state.sortedItems = sorter.sortItemsByPublishDate(
           state.sortedItems,
           state.dateByVideoId,
@@ -313,7 +326,7 @@
       state.lastFetchDebug && failed && !state.lastFetchDebug.startsWith('visual ')
         ? state.lastFetchDebug
         : '';
-    return t(
+    const base = t(
       'summary',
       state.sortedItems.length,
       state.order,
@@ -322,6 +335,7 @@
       state.fetchStats,
       debug
     );
+    return state.truncatedTo ? `${base}${t('truncated', state.truncatedTo)}` : base;
   }
 
   async function refreshSortedItems() {
@@ -338,10 +352,19 @@
     });
     ensurePanel();
 
+    state.reorderGaveUp = false;
+    state.reorderTimestamps = [];
+
+    setLoading(true, 'loadingPhase', 0, 0);
+    setStatusKey('loadingStatus');
+    await loadAllPlaylistRows(MAX_ITEMS);
+
     setLoading(true, 'waitingPhase', 0, 0);
     setStatusKey('waitingStatus');
 
-    const items = (await waitForPlaylistItems()).slice(0, MAX_ITEMS);
+    const allItems = await waitForPlaylistItems();
+    state.truncatedTo = allItems.length > MAX_ITEMS ? MAX_ITEMS : 0;
+    const items = allItems.slice(0, MAX_ITEMS);
     if (items.length === 0) {
       setStatusKey('noItems');
       setLoading(false);
@@ -357,6 +380,7 @@
     updateProgress('sortingPhase', items.length, items.length);
     state.sortedItems = sorter.sortItemsByPublishDate(items, state.dateByVideoId, state.order);
     state.badgesEnabled = true;
+    clearSavedOrderRetries();
     state.visualMode = 'sorted';
     applyVisualOrder();
     state.visualMode = 'badges';
@@ -371,15 +395,76 @@
     const deadline = Date.now() + 6000;
     let lastItems = [];
     while (Date.now() < deadline) {
-      lastItems = sorter.extractPlaylistItemsFromDocument(document);
+      lastItems = extractItemsFromRows();
       if (lastItems.length > 0) return lastItems;
       await delay(200);
     }
     return lastItems;
   }
 
+  // Build the sortable item list from the SAME row set that applyVisualOrder
+  // reorders (getPlaylistRows). Using a different selector path here
+  // (sorter.extractPlaylistItemsFromDocument) drifted and yielded fewer items
+  // than getPlaylistRows, leaving rows beyond the matched set unsorted.
+  function extractItemsFromRows() {
+    const seen = new Set();
+    const items = [];
+    for (const row of getPlaylistRows()) {
+      const videoId = getVideoIdFromRow(row);
+      if (!videoId || seen.has(videoId)) continue;
+      seen.add(videoId);
+      const titleNode =
+        (row.querySelector && (row.querySelector('#video-title') || row.querySelector('span[title]'))) ||
+        null;
+      const rawTitle =
+        (titleNode &&
+          ((titleNode.getAttribute && titleNode.getAttribute('title')) ||
+            (titleNode.textContent || '').trim())) ||
+        videoId;
+      items.push({
+        videoId,
+        title: String(rawTitle).replace(/\s+/g, ' ').trim(),
+        originalIndex: items.length,
+      });
+    }
+    return items;
+  }
+
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // YouTube renders playlist rows lazily (~100 at a time). Scroll the last row
+  // into view repeatedly so the continuation loads every row into the DOM
+  // before extraction; otherwise items beyond the first batch are never sorted.
+  async function loadAllPlaylistRows(maxItems) {
+    const deadline = Date.now() + LOAD_ALL_TIMEOUT_MS;
+    const restoreScrollY = window.scrollY;
+    let lastCount = -1;
+    let stableTicks = 0;
+    try {
+      while (Date.now() < deadline) {
+        const rows = getPlaylistRows();
+        const count = rows.length;
+        if (count >= maxItems) break;
+        if (count === lastCount) {
+          stableTicks += 1;
+          if (stableTicks >= LOAD_ALL_STABLE_TICKS) break;
+        } else {
+          stableTicks = 0;
+          lastCount = count;
+        }
+        const lastRow = rows[rows.length - 1];
+        if (lastRow && lastRow.scrollIntoView) {
+          lastRow.scrollIntoView({ block: 'end' });
+        }
+        await delay(LOAD_ALL_STEP_MS);
+      }
+    } finally {
+      window.scrollTo(0, restoreScrollY);
+    }
+    debugLog('loaded all rows', { rows: getPlaylistRows().length, maxItems });
+    return getPlaylistRows().length;
   }
 
   async function fetchDates(items) {
@@ -528,17 +613,21 @@
       return;
     }
 
-    const currentOrder = Array.from(parent.children)
-      .filter((node) => rowByVideoId.has(getVideoIdFromRow(node)))
-      .map((node) => getVideoIdFromRow(node));
     const desiredOrder = state.sortedItems
       .filter((item) => rowByVideoId.has(item.videoId))
       .map((item) => item.videoId);
+    // Compare only the sorted videos' relative order. Rows that are not part of
+    // the sorted set (duplicates, unfetchable, lazily added) must be excluded,
+    // otherwise the length mismatch makes sameOrder() never converge and the
+    // 1.5s interval reorders forever -> thumbnail flicker.
+    const desiredSet = new Set(desiredOrder);
+    const currentOrder = Array.from(parent.children)
+      .filter((node) => desiredSet.has(getVideoIdFromRow(node)))
+      .map((node) => getVideoIdFromRow(node));
     if (sameOrder(currentOrder, desiredOrder)) {
+      state.reorderTimestamps = [];
       if (state.badgesEnabled) {
         decorateRows(rowByVideoId);
-      } else {
-        safelyDecorateRows(rowByVideoId);
       }
       setDebug(`visual rows=${rows.length}, matched=${sortedRows.length}, already sorted`, {
         badgeCount: document.querySelectorAll('.ytpds-date-badge').length,
@@ -550,6 +639,31 @@
       state.badgesEnabled = false;
       setDebug(`visual rows=${rows.length}, matched=${sortedRows.length}, native order detected`);
       setSummaryStatus();
+      return;
+    }
+
+    // Reordering rows moves thumbnail <img> nodes; if YouTube keeps re-rendering
+    // the list (large playlists) we never converge and the thumbnails flicker.
+    // Detect repeated reorders in a short window and stop moving the DOM, keeping
+    // only the order-number badges (playback order still works via Next/auto).
+    if (state.reorderGaveUp) {
+      if (state.badgesEnabled) decorateRows(rowByVideoId);
+      setDebug(`visual rows=${rows.length}, matched=${sortedRows.length}, reorder paused`, {
+        badgeCount: document.querySelectorAll('.ytpds-date-badge').length,
+      });
+      return;
+    }
+    const reorderNow = Date.now();
+    state.reorderTimestamps = state.reorderTimestamps.filter(
+      (ts) => reorderNow - ts < REORDER_THRASH_WINDOW_MS
+    );
+    state.reorderTimestamps.push(reorderNow);
+    if (state.reorderTimestamps.length > REORDER_THRASH_LIMIT) {
+      state.reorderGaveUp = true;
+      if (state.badgesEnabled) decorateRows(rowByVideoId);
+      setDebug(`visual rows=${rows.length}, matched=${sortedRows.length}, reorder gave up (thrash)`, {
+        badgeCount: document.querySelectorAll('.ytpds-date-badge').length,
+      });
       return;
     }
 
@@ -670,6 +784,7 @@
 
   function restoreNativeOrder() {
     state.badgesEnabled = false;
+    clearSavedOrderRetries();
     state.visualMode = 'idle';
     applyOrderByItems(
       [...state.sortedItems].sort((left, right) => left.originalIndex - right.originalIndex),
@@ -708,8 +823,9 @@
       return false;
     }
 
+    const desiredSet = new Set(desiredOrder);
     const currentOrder = Array.from(parent.children)
-      .filter((node) => rowByVideoId.has(getVideoIdFromRow(node)))
+      .filter((node) => desiredSet.has(getVideoIdFromRow(node)))
       .map((node) => getVideoIdFromRow(node));
     if (sameOrder(currentOrder, desiredOrder)) {
       debugLog(`${reason} already applied`, {
@@ -798,14 +914,20 @@
 
     const observer = new MutationObserver((mutations) => {
       if (state.applyingVisualOrder || state.sortedItems.length === 0) return;
-      if (mutations.length > 0 && mutations.every(isOwnVisualMutation)) return;
+      // During load/fetch the rows grow as we auto-scroll; reordering the stale
+      // sorted set here would burn the thrash budget before the real sort runs.
+      if (state.loading) return;
+      if (!mutations.some(shouldReapplyForMutation)) return;
       clearTimeout(state.visualApplyTimer);
-      state.visualApplyTimer = setTimeout(() => applyVisualOrder(), 120);
+      state.visualApplyTimer = setTimeout(() => {
+        if (!state.badgesEnabled) {
+          applySavedOrderWithoutBadges();
+        } else {
+          applyVisualOrder();
+        }
+      }, 120);
     });
     observer.observe(root, {
-      attributes: true,
-      attributeOldValue: true,
-      attributeFilter: ['class', 'data-ytpds-sorted', 'data-ytpds-sort-index'],
       childList: true,
       subtree: true,
     });
@@ -842,6 +964,21 @@
     return (
       node.classList.contains('ytpds-date-badge') ||
       Boolean(node.querySelector && node.querySelector('.ytpds-date-badge'))
+    );
+  }
+
+  function shouldReapplyForMutation(mutation) {
+    if (isOwnVisualMutation(mutation)) return false;
+    if (mutation.type !== 'childList') return false;
+    const nodes = Array.from(mutation.addedNodes).concat(Array.from(mutation.removedNodes));
+    return nodes.some(isPlaylistStructureNode);
+  }
+
+  function isPlaylistStructureNode(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+    return (
+      (node.matches && node.matches(PLAYLIST_ROW_SELECTOR)) ||
+      Boolean(node.querySelector && node.querySelector(PLAYLIST_ROW_SELECTOR))
     );
   }
 
@@ -893,8 +1030,9 @@
       };
     }
 
+    const desiredSet = new Set(desiredOrder);
     const currentOrder = Array.from(parent.children)
-      .filter((node) => rowByVideoId.has(getVideoIdFromRow(node)))
+      .filter((node) => desiredSet.has(getVideoIdFromRow(node)))
       .map((node) => getVideoIdFromRow(node));
 
     return {
@@ -1034,6 +1172,7 @@
     const playlistId = sorter.getPlaylistIdFromUrl(location.href);
     if (!playlistId) return;
     state.restoredPlaylistId = '';
+    clearSavedOrderRetries();
     await storageRemove(storageKeyForPlaylist(playlistId));
   }
 
@@ -1053,9 +1192,7 @@
     if (select) select.value = state.order;
     applySavedOrderWithoutBadges();
     ensureVisualObserver();
-    scheduleSavedOrderApply(250);
-    scheduleSavedOrderApply(1000);
-    scheduleSavedOrderApply(2500);
+    scheduleSavedOrderRetries();
     if (state.badgesEnabled) {
       setSummaryStatus();
     } else {
@@ -1079,13 +1216,29 @@
   }
 
   function scheduleSavedOrderApply(ms) {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      state.savedOrderApplyTimers = state.savedOrderApplyTimers.filter((item) => item !== timer);
       if (state.sortedItems.length > 0 && !state.badgesEnabled) {
         applySavedOrderWithoutBadges();
       } else if (state.sortedItems.length > 0) {
         tryAutoEnableSavedBadges(`saved order ${ms}ms`);
       }
     }, ms);
+    state.savedOrderApplyTimers.push(timer);
+  }
+
+  function scheduleSavedOrderRetries() {
+    clearSavedOrderRetries();
+    scheduleSavedOrderApply(250);
+    scheduleSavedOrderApply(1000);
+    scheduleSavedOrderApply(2500);
+  }
+
+  function clearSavedOrderRetries() {
+    for (const timer of state.savedOrderApplyTimers) {
+      clearTimeout(timer);
+    }
+    state.savedOrderApplyTimers = [];
   }
 
   function scheduleVisualOrderApply(ms) {
@@ -1140,6 +1293,10 @@
       state.sortedItems = [];
       state.restoredPlaylistId = '';
       state.badgesEnabled = false;
+      state.reorderGaveUp = false;
+      state.reorderTimestamps = [];
+      state.truncatedTo = 0;
+      clearSavedOrderRetries();
       clearDecorations();
     }
     const panelMissingBeforeEnsure =
@@ -1148,22 +1305,16 @@
     if (pathChanged && state.sortedItems.length > 0) {
       state.badgesEnabled = false;
       applySavedOrderWithoutBadges();
-      scheduleSavedOrderApply(250);
-      scheduleSavedOrderApply(1000);
-      scheduleSavedOrderApply(2500);
+      scheduleSavedOrderRetries();
     } else if (urlChanged || panelMissingBeforeEnsure) {
       restoreSortState();
     }
     if (state.sortedItems.length > 0) {
       ensureVisualObserver();
-      if (state.badgesEnabled) {
+      if (state.badgesEnabled && (urlChanged || pathChanged || panelMissingBeforeEnsure)) {
         scheduleVisualOrderApply(250);
         scheduleVisualOrderApply(1000);
         scheduleVisualOrderApply(2500);
-      } else {
-        scheduleSavedOrderApply(250);
-        scheduleSavedOrderApply(1000);
-        scheduleSavedOrderApply(2500);
       }
     }
     highlightCurrentVideo();
@@ -1171,7 +1322,7 @@
   }
 
   function highlightCurrentVideo() {
-    if (state.sortedItems.length === 0) return;
+    if (!state.badgesEnabled || state.sortedItems.length === 0) return;
     const rowByVideoId = new Map();
     for (const row of getPlaylistRows()) {
       const videoId = getVideoIdFromRow(row);
@@ -1196,6 +1347,7 @@
       !state.loading &&
       state.badgesEnabled &&
       state.sortedItems.length > 0 &&
+      !state.reorderGaveUp &&
       !hasDesiredDomOrder()
     ) {
       applyVisualOrder();
