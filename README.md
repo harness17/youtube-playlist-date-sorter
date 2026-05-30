@@ -6,8 +6,8 @@ YouTube のプレイリストページとプレイリスト再生ページで、
 
 1. `chrome://extensions/` を開く
 2. デベロッパーモードをオン
-3. `.\scripts\package-release.ps1 -Target chrome` を実行
-4. 「パッケージ化されていない拡張機能を読み込む」で `dist/chrome/youtube-playlist-date-sorter-chrome-v0.1.2` を選択
+3. `.\scripts\build-dev.ps1` を実行（拡張をビルド。コード変更のたびに実行）
+4. 「パッケージ化されていない拡張機能を読み込む」で `dist/dev/chrome` を選択（パスは固定。以後は手順3の再実行 → 🔄 リロードで反映）
 5. `https://www.youtube.com/playlist?list=...` または `https://www.youtube.com/watch?...&list=...` を開く
 6. 右下の「並び替え」を押す
 7. プレイリスト表示が投稿日順に並び替わる
@@ -15,20 +15,9 @@ YouTube のプレイリストページとプレイリスト再生ページで、
 9. 拡張アイコンを押して、日本語 / English を切り替える
 10. 右下パネルの「最小化」で表示領域を小さくし、「展開」で戻す
 
-Firefox で手動確認する場合は `.\scripts\package-release.ps1 -Target firefox` を実行し、`about:debugging#/runtime/this-firefox` から `dist/firefox/youtube-playlist-date-sorter-firefox-v0.1.1/manifest.json` を一時的なアドオンとして読み込みます。
+Firefox は `.\scripts\build-dev.ps1 -Target all` を実行し、`about:debugging#/runtime/this-firefox` から `dist/dev/firefox/manifest.json` を一時的なアドオンとして読み込みます。
 
-## 開発用ロード（バージョン非依存）
-
-開発中は `scripts/build-dev.ps1` でバージョン名のない固定フォルダ `dist/dev/<browser>/` に出力します。一度読み込めば、以後はリビルド → ブラウザの再読み込みボタンだけで反映され、バージョンごとのフォルダ選び直し（取り違え）が不要です。
-
-```powershell
-.\scripts\build-dev.ps1              # chrome のみ（既定）
-.\scripts\build-dev.ps1 -Target all  # chrome + firefox
-```
-
-- 初回のみ: `chrome://extensions/` →「パッケージ化されていない拡張機能を読み込む」→ `dist/dev/chrome` を選択
-- Firefox: `about:debugging#/runtime/this-firefox` から `dist/dev/firefox/manifest.json` を一時的なアドオンとして読み込む
-- 出力先 `dist/` は Git 管理外（ストア提出用パッケージは `package-release.ps1`）
+> 開発用ロードはバージョン名のない固定パス `dist/dev/<browser>/` を使うため、版を上げてもフォルダを選び直す必要はありません。出力先 `dist/` は Git 管理外です。ストア提出用の版番号付きパッケージは `scripts/package-release.ps1` で別途生成します（後述）。
 
 ## 方針
 
