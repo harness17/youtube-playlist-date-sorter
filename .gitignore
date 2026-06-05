@@ -1,5 +1,8 @@
 dist/
 *.zip
+tmp/
+.claude/settings.local.json
+CLAUDE_CODE_HANDOFF.md
 
 .DS_Store
 Thumbs.db

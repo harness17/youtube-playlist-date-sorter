@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+changed_files="$(git diff --cached --name-only -- extension manifests scripts/build-dev.ps1 verify-date-sorter.mjs)"
+if [ -z "$changed_files" ]; then
+  exit 0
+fi
+
+echo "[pre-commit] verifying date sorter and rebuilding dist/dev..."
+node ./verify-date-sorter.mjs
+
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-dev.ps1 -Target all
+elif command -v powershell.exe >/dev/null 2>&1; then
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-dev.ps1 -Target all
+else
+  echo "[pre-commit] PowerShell was not found; cannot run scripts/build-dev.ps1" >&2
+  exit 1
+fi
