@@ -6,10 +6,12 @@
   const MAX_ITEMS = 300;
   const FETCH_CONCURRENCY = 4;
   const LOAD_ALL_TIMEOUT_MS = 20000;
-  const LOAD_ALL_STABLE_TICKS = 3;
+  const LOAD_ALL_STABLE_TICKS = 8;
   const LOAD_ALL_STEP_MS = 400;
   const REORDER_THRASH_WINDOW_MS = 3000;
   const REORDER_THRASH_LIMIT = 5;
+  const CACHED_APPLY_TIMEOUT_MS = 30000;
+  const CACHED_APPLY_STEP_MS = 500;
   const SETTINGS_KEY = 'ytpds:settings';
   const PLAYLIST_ROW_SELECTOR =
     'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer';
@@ -31,6 +33,9 @@
     visualObserver: null,
     visualObserverRoot: null,
     visualApplyTimer: 0,
+    cachedApplyTimer: 0,
+    cachedApplyDeadline: 0,
+    cachedApplyReason: '',
     savedOrderApplyTimers: [],
     applyingVisualOrder: false,
     restoredPlaylistId: '',
@@ -130,9 +135,13 @@
       const native = order.querySelector('option[value="native"]');
       const asc = order.querySelector('option[value="asc"]');
       const desc = order.querySelector('option[value="desc"]');
+      const titleAsc = order.querySelector('option[value="title-asc"]');
+      const titleDesc = order.querySelector('option[value="title-desc"]');
       if (native) native.textContent = t('normalOrder');
       if (asc) asc.textContent = t('oldestFirst');
       if (desc) desc.textContent = t('newestFirst');
+      if (titleAsc) titleAsc.textContent = t('titleAsc');
+      if (titleDesc) titleDesc.textContent = t('titleDesc');
       if (order.value !== state.order) order.value = state.order;
     }
     if (sortButton) sortButton.textContent = state.loading ? t('sorting') : t('sort');
@@ -181,6 +190,8 @@
           <option value="native"></option>
           <option value="asc"></option>
           <option value="desc"></option>
+          <option value="title-asc"></option>
+          <option value="title-desc"></option>
         </select>
         <div class="ytpds-row">
           <button class="ytpds-button" type="button" data-ytpds-sort></button>
@@ -206,12 +217,7 @@
       saveSettings();
     });
     panel.querySelector('[data-ytpds-order]').addEventListener('change', (event) => {
-      const nextOrder =
-        event.target.value === 'native'
-          ? 'native'
-          : event.target.value === 'desc'
-            ? 'desc'
-            : 'asc';
+      const nextOrder = sorter.normalizeSortOrder(event.target.value);
       state.order = nextOrder;
       if (nextOrder === 'native') {
         restoreNativeOrder();
@@ -221,12 +227,13 @@
       if (state.sortedItems.length > 0) {
         state.reorderGaveUp = false;
         state.reorderTimestamps = [];
-        state.sortedItems = sorter.sortItemsByPublishDate(
-          state.sortedItems,
-          state.dateByVideoId,
-          state.order
-        );
-        applyVisualOrder();
+        clearSavedOrderRetries();
+        if (needsPublishDatesForCurrentItems()) {
+          refreshSortedItems();
+          return;
+        }
+        state.sortedItems = sorter.sortItems(state.sortedItems, state.dateByVideoId, state.order);
+        applyCachedSortVisualOrder('selected order');
         saveSortState();
         setSummaryStatus();
       }
@@ -320,7 +327,11 @@
   }
 
   function buildSummaryText() {
-    const known = state.sortedItems.filter((item) => state.dateByVideoId[item.videoId]).length;
+    const sortKind = sorter.getSortKind(state.order);
+    const known =
+      sortKind === 'publish'
+        ? state.sortedItems.filter((item) => state.dateByVideoId[item.videoId]).length
+        : state.sortedItems.length;
     const failed = state.fetchStats.httpError + state.fetchStats.noDate + state.fetchStats.networkError;
     const debug =
       state.lastFetchDebug && failed && !state.lastFetchDebug.startsWith('visual ')
@@ -330,6 +341,7 @@
       'summary',
       state.sortedItems.length,
       state.order,
+      sortKind,
       known,
       failed,
       state.fetchStats,
@@ -354,15 +366,21 @@
 
     state.reorderGaveUp = false;
     state.reorderTimestamps = [];
+    clearCachedSortApply();
 
     setLoading(true, 'loadingPhase', 0, 0);
     setStatusKey('loadingStatus');
-    await loadAllPlaylistRows(MAX_ITEMS);
+    const restoreLoadedScroll = await loadAllPlaylistRows(MAX_ITEMS);
 
     setLoading(true, 'waitingPhase', 0, 0);
     setStatusKey('waitingStatus');
 
-    const allItems = await waitForPlaylistItems();
+    let allItems = [];
+    try {
+      allItems = await waitForPlaylistItems();
+    } finally {
+      restoreLoadedScroll();
+    }
     state.truncatedTo = allItems.length > MAX_ITEMS ? MAX_ITEMS : 0;
     const items = allItems.slice(0, MAX_ITEMS);
     if (items.length === 0) {
@@ -371,14 +389,16 @@
       return;
     }
 
-    state.fetchStats = { ok: 0, httpError: 0, noDate: 0, networkError: 0 };
     state.lastFetchDebug = '';
-    updateProgress('fetchingPhase', 0, items.length);
-    state.statusRenderer = () => t('fetchingStatus', items.length);
-    renderStatus();
-    await fetchDates(items);
+    state.fetchStats = { ok: 0, httpError: 0, noDate: 0, networkError: 0 };
+    if (requiresPublishDates()) {
+      updateProgress('fetchingPhase', 0, items.length);
+      state.statusRenderer = () => t('fetchingStatus', items.length);
+      renderStatus();
+      await fetchDates(items);
+    }
     updateProgress('sortingPhase', items.length, items.length);
-    state.sortedItems = sorter.sortItemsByPublishDate(items, state.dateByVideoId, state.order);
+    state.sortedItems = sorter.sortItems(items, state.dateByVideoId, state.order);
     state.badgesEnabled = true;
     clearSavedOrderRetries();
     state.visualMode = 'sorted';
@@ -430,6 +450,17 @@
     return items;
   }
 
+  function requiresPublishDates() {
+    return sorter.getSortKind(state.order) === 'publish';
+  }
+
+  function needsPublishDatesForCurrentItems() {
+    return (
+      requiresPublishDates() &&
+      state.sortedItems.some((item) => !state.dateByVideoId[item.videoId])
+    );
+  }
+
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -440,12 +471,24 @@
   async function loadAllPlaylistRows(maxItems) {
     const deadline = Date.now() + LOAD_ALL_TIMEOUT_MS;
     const restoreScrollY = window.scrollY;
+    const restoreElementScrollTops = new Map();
     let lastCount = -1;
     let stableTicks = 0;
+    let restored = false;
+    function restoreScroll() {
+      if (restored) return;
+      restored = true;
+      for (const [element, scrollTop] of restoreElementScrollTops) {
+        if (document.contains(element)) element.scrollTop = scrollTop;
+      }
+      window.scrollTo(0, restoreScrollY);
+    }
+
     try {
       while (Date.now() < deadline) {
         const rows = getPlaylistRows();
         const count = rows.length;
+        updateProgress('loadingPhase', count, maxItems);
         if (count >= maxItems) break;
         if (count === lastCount) {
           stableTicks += 1;
@@ -455,16 +498,64 @@
           lastCount = count;
         }
         const lastRow = rows[rows.length - 1];
-        if (lastRow && lastRow.scrollIntoView) {
-          lastRow.scrollIntoView({ block: 'end' });
-        }
+        scrollPlaylistRowsTowardEnd(lastRow, restoreElementScrollTops);
         await delay(LOAD_ALL_STEP_MS);
       }
-    } finally {
-      window.scrollTo(0, restoreScrollY);
+    } catch (error) {
+      restoreScroll();
+      throw error;
     }
-    debugLog('loaded all rows', { rows: getPlaylistRows().length, maxItems });
-    return getPlaylistRows().length;
+    debugLog('loaded all rows', { rows: getPlaylistRows().length, maxItems, stableTicks });
+    return restoreScroll;
+  }
+
+  function scrollPlaylistRowsTowardEnd(lastRow, restoreElementScrollTops) {
+    if (!lastRow) return;
+    for (const target of getPlaylistScrollTargets(lastRow)) {
+      if (!restoreElementScrollTops.has(target)) {
+        restoreElementScrollTops.set(target, target.scrollTop);
+      }
+      target.scrollTop = Math.max(
+        target.scrollTop + Math.max(target.clientHeight * 0.9, 600),
+        target.scrollHeight - target.clientHeight
+      );
+    }
+    if (lastRow.scrollIntoView) {
+      lastRow.scrollIntoView({ block: 'end', inline: 'nearest' });
+    }
+    window.scrollBy(0, Math.max(window.innerHeight * 0.8, 600));
+  }
+
+  function getPlaylistScrollTargets(lastRow) {
+    const targets = [];
+    const seen = new Set();
+    function add(element) {
+      if (!element || seen.has(element) || !isScrollableElement(element)) return;
+      seen.add(element);
+      targets.push(element);
+    }
+
+    const playlistRoot =
+      lastRow.closest &&
+      lastRow.closest('ytd-playlist-video-list-renderer, ytd-playlist-panel-renderer');
+    if (playlistRoot) {
+      add(playlistRoot);
+      for (const selector of ['#contents', '#items']) {
+        add(playlistRoot.querySelector(selector));
+      }
+    }
+
+    let current = lastRow.parentElement;
+    while (current && current !== document.documentElement) {
+      add(current);
+      current = current.parentElement;
+    }
+    add(document.scrollingElement || document.documentElement);
+    return targets;
+  }
+
+  function isScrollableElement(element) {
+    return Boolean(element && element.scrollHeight > element.clientHeight + 20);
   }
 
   async function fetchDates(items) {
@@ -738,7 +829,8 @@
       const badgeText = t(
         'badge',
         index + 1,
-        state.dateByVideoId[item.videoId] || t('unknownDate')
+        getBadgeDetail(item),
+        state.order
       );
       if (badge.textContent !== badgeText) {
         badge.textContent = badgeText;
@@ -784,6 +876,7 @@
 
   function restoreNativeOrder() {
     state.badgesEnabled = false;
+    clearCachedSortApply();
     clearSavedOrderRetries();
     state.visualMode = 'idle';
     applyOrderByItems(
@@ -1172,8 +1265,94 @@
     const playlistId = sorter.getPlaylistIdFromUrl(location.href);
     if (!playlistId) return;
     state.restoredPlaylistId = '';
+    clearCachedSortApply();
     clearSavedOrderRetries();
     await storageRemove(storageKeyForPlaylist(playlistId));
+  }
+
+  function getBadgeDetail(item) {
+    const sortKind = sorter.getSortKind(state.order);
+    if (sortKind === 'title') return item.title || item.videoId;
+    return state.dateByVideoId[item.videoId] || t('unknownDate');
+  }
+
+  function applyCachedSortVisualOrder(reason) {
+    if (state.sortedItems.length === 0 || state.order === 'native') return;
+    clearCachedSortApply();
+    clearSavedOrderRetries();
+    state.badgesEnabled = true;
+    state.forceOrderWithoutBadges = false;
+    state.cachedApplyDeadline = Date.now() + CACHED_APPLY_TIMEOUT_MS;
+    state.cachedApplyReason = reason;
+    runCachedSortApplyLoop(reason);
+  }
+
+  function runCachedSortApplyLoop(reason) {
+    if (state.cachedApplyTimer) {
+      clearTimeout(state.cachedApplyTimer);
+      state.cachedApplyTimer = 0;
+    }
+    if (
+      state.sortedItems.length === 0 ||
+      state.order === 'native' ||
+      reason !== state.cachedApplyReason
+    ) {
+      return;
+    }
+
+    state.badgesEnabled = true;
+    state.forceOrderWithoutBadges = false;
+    state.visualMode = 'sorted';
+    applyVisualOrder();
+    state.visualMode = 'badges';
+    ensureVisualObserver();
+    highlightCurrentVideo();
+
+    const snapshot = getVisualOrderSnapshot();
+    const matched = snapshot ? snapshot.matchedCount : 0;
+    const rows = snapshot ? snapshot.rows.length : getPlaylistRows().length;
+    if (matched > 0 && (snapshot.orderMatches || state.reorderGaveUp)) {
+      debugLog(`${reason} applied after playlist load`, {
+        rows,
+        matched,
+        order: state.order,
+        items: state.sortedItems.length,
+      });
+      clearCachedSortApply();
+      return;
+    }
+
+    if (Date.now() >= state.cachedApplyDeadline) {
+      debugLog(`${reason} apply timeout`, {
+        rows,
+        matched,
+        order: state.order,
+        items: state.sortedItems.length,
+      });
+      clearCachedSortApply();
+      return;
+    }
+
+    state.cachedApplyTimer = setTimeout(
+      () => runCachedSortApplyLoop(reason),
+      CACHED_APPLY_STEP_MS
+    );
+    debugLog(`${reason} waiting for playlist rows`, {
+      rows,
+      matched,
+      order: state.order,
+      items: state.sortedItems.length,
+      url: location.href,
+    });
+  }
+
+  function clearCachedSortApply() {
+    if (state.cachedApplyTimer) {
+      clearTimeout(state.cachedApplyTimer);
+      state.cachedApplyTimer = 0;
+    }
+    state.cachedApplyDeadline = 0;
+    state.cachedApplyReason = '';
   }
 
   async function restoreSortState() {
@@ -1184,20 +1363,14 @@
     if (!saved || !Array.isArray(saved.sortedItems) || saved.sortedItems.length === 0) return;
 
     state.restoredPlaylistId = playlistId;
-    state.order = saved.order === 'desc' ? 'desc' : 'asc';
+    state.order = sorter.normalizeSortOrder(saved.order);
     state.sortedItems = saved.sortedItems;
     state.dateByVideoId = Object.assign(Object.create(null), saved.dateByVideoId || {});
-    state.badgesEnabled = false;
+    state.badgesEnabled = true;
     const select = state.panel && state.panel.querySelector('[data-ytpds-order]');
     if (select) select.value = state.order;
-    applySavedOrderWithoutBadges();
-    ensureVisualObserver();
-    scheduleSavedOrderRetries();
-    if (state.badgesEnabled) {
-      setSummaryStatus();
-    } else {
-      setStatusKey('saved', state.sortedItems.length);
-    }
+    applyCachedSortVisualOrder('saved order');
+    setSummaryStatus();
     ensurePanel();
   }
 
@@ -1271,6 +1444,17 @@
     const video = document.querySelector('video');
     if (!video || video.dataset.ytpdsEndedBound === '1') return;
     video.dataset.ytpdsEndedBound = '1';
+    // Pause 1.5 s before the end when autoAdvance is OFF.
+    // YouTube's auto-advance is driven by the `ended` event (fires 7.6 s countdown).
+    // `ended` only fires when currentTime reaches duration, so pausing here prevents it.
+    // 0.1 s was too tight: timeupdate fires every ~250 ms, so the last event could land
+    // at the same instant as `ended` — stopImmediatePropagation was also ineffective
+    // because YouTube registers its listener before content scripts load.
+    video.addEventListener('timeupdate', () => {
+      if (!state.autoAdvance && !video.paused && video.duration > 0 && video.duration - video.currentTime < 1.5) {
+        video.pause();
+      }
+    });
     video.addEventListener('ended', () => {
       if (state.autoAdvance && isPlaylistWatchPage()) {
         goNextByPublishDate();
@@ -1296,6 +1480,7 @@
       state.reorderGaveUp = false;
       state.reorderTimestamps = [];
       state.truncatedTo = 0;
+      clearCachedSortApply();
       clearSavedOrderRetries();
       clearDecorations();
     }
@@ -1303,9 +1488,7 @@
       isSupportedPlaylistPage() && (!state.panel || !document.contains(state.panel));
     ensurePanel();
     if (pathChanged && state.sortedItems.length > 0) {
-      state.badgesEnabled = false;
-      applySavedOrderWithoutBadges();
-      scheduleSavedOrderRetries();
+      applyCachedSortVisualOrder('navigation');
     } else if (urlChanged || panelMissingBeforeEnsure) {
       restoreSortState();
     }
