@@ -25,6 +25,40 @@ assert.match(contentScript, /function shouldReapplyForMutation/);
 assert.match(contentScript, /function scheduleSavedOrderRetries/);
 assert.match(contentScript, /clearSavedOrderRetries\(\);\s*scheduleSavedOrderApply\(250\);/);
 assert.match(contentScript, /state\.badgesEnabled && \(urlChanged \|\| pathChanged \|\| panelMissingBeforeEnsure\)/);
+assert.match(contentScript, /const restoreLoadedScroll = await loadAllPlaylistRows\(MAX_ITEMS\);/);
+assert.match(
+  contentScript,
+  /allItems = await waitForPlaylistItems\(\);\s*\} finally \{\s*restoreLoadedScroll\(\);/
+);
+assert.match(
+  contentScript,
+  /state\.sortedItems = sorter\.sortItems\(state\.sortedItems, state\.dateByVideoId, state\.order\)[\s\S]*?applyCachedSortVisualOrder\('selected order'\);/
+);
+assert.match(
+  contentScript,
+  /function applyCachedSortVisualOrder\(reason\)[\s\S]*?state\.cachedApplyDeadline = Date\.now\(\) \+ CACHED_APPLY_TIMEOUT_MS;[\s\S]*?runCachedSortApplyLoop\(reason\);/
+);
+assert.match(
+  contentScript,
+  /function runCachedSortApplyLoop\(reason\)[\s\S]*?state\.visualMode = 'sorted';\s*applyVisualOrder\(\);\s*state\.visualMode = 'badges';\s*ensureVisualObserver\(\);\s*highlightCurrentVideo\(\);/
+);
+assert.match(
+  contentScript,
+  /state\.cachedApplyTimer = setTimeout\(\s*\(\) => runCachedSortApplyLoop\(reason\),\s*CACHED_APPLY_STEP_MS\s*\);/
+);
+assert.match(
+  contentScript,
+  /function clearCachedSortApply\(\)[\s\S]*?clearTimeout\(state\.cachedApplyTimer\);[\s\S]*?state\.cachedApplyReason = '';/
+);
+assert.match(
+  contentScript,
+  /state\.badgesEnabled = true;\s*const select[\s\S]*?applyCachedSortVisualOrder\('saved order'\);\s*setSummaryStatus\(\);/
+);
+assert.match(
+  contentScript,
+  /if \(pathChanged && state\.sortedItems\.length > 0\) \{\s*applyCachedSortVisualOrder\('navigation'\);/
+);
+assert.doesNotMatch(contentScript, /pathChanged && state\.sortedItems\.length > 0[\s\S]{0,120}state\.badgesEnabled = false/);
 assert.match(
   contentScript,
   /function highlightCurrentVideo\(\) \{\s*if \(!state\.badgesEnabled \|\| state\.sortedItems\.length === 0\) return;/
@@ -33,7 +67,15 @@ assert.doesNotMatch(contentScript, /attributeFilter: \['class'/);
 // 101+ playlist fix: load all lazily-rendered rows before extracting,
 // raise the item cap, and stop the reorder loop that flickers thumbnails.
 assert.match(contentScript, /const MAX_ITEMS = 300;/);
+assert.match(contentScript, /const CACHED_APPLY_TIMEOUT_MS = 30000;/);
+assert.match(contentScript, /const CACHED_APPLY_STEP_MS = 500;/);
+assert.match(contentScript, /const LOAD_ALL_STABLE_TICKS = 8;/);
 assert.match(contentScript, /async function loadAllPlaylistRows\(maxItems\)/);
+assert.match(contentScript, /function scrollPlaylistRowsTowardEnd\(lastRow, restoreElementScrollTops\)/);
+assert.match(contentScript, /function getPlaylistScrollTargets\(lastRow\)/);
+assert.match(contentScript, /function restoreScroll\(\)/);
+assert.match(contentScript, /playlistRoot\.querySelector\(selector\)/);
+assert.match(contentScript, /window\.scrollBy\(0, Math\.max\(window\.innerHeight \* 0\.8, 600\)\);/);
 // Sort source must equal reorder source (getPlaylistRows) to avoid selector drift.
 assert.match(contentScript, /function extractItemsFromRows\(\)/);
 assert.match(contentScript, /lastItems = extractItemsFromRows\(\);/);
@@ -146,35 +188,60 @@ assert.deepEqual(
   desc.map((item) => item.videoId),
   ['newer', 'older', 'unknown']
 );
+assert.equal(sorter.normalizeSortOrder('bad-value'), 'asc');
+assert.equal(sorter.getSortKind('title-desc'), 'title');
+assert.deepEqual(
+  sorter.sortItems(
+    [
+      { videoId: 'b', title: 'Video 10', originalIndex: 0 },
+      { videoId: 'a', title: 'Video 2', originalIndex: 1 },
+    ],
+    {},
+    'title-asc'
+  ).map((item) => item.videoId),
+  ['a', 'b']
+);
 
 assert.equal(i18n.normalizeLanguage('en'), 'en');
 assert.equal(i18n.normalizeLanguage('fr'), 'ja');
 assert.equal(i18n.translate('en', 'sort'), 'Sort');
 assert.equal(i18n.translate('en', 'minimize'), 'Minimize');
 assert.equal(i18n.translate('en', 'normalOrder'), 'Default order');
+assert.equal(i18n.translate('en', 'titleAsc'), 'Title A-Z');
 assert.equal(i18n.translate('ja', 'expand'), '展開');
 assert.equal(i18n.translate('ja', 'nativeRestored'), 'YouTubeの通常順に戻しました。');
 assert.equal(i18n.translate('ja', 'badge', 2, '2024-03-05'), '投稿日順 #2 2024-03-05');
+assert.equal(i18n.translate('en', 'badge', 3, 'Video 2', 'title-asc'), 'Title order #3 Video 2');
 assert.equal(i18n.translate('ja', 'truncated', 300), ' 上限300件まで処理しました。');
 assert.equal(i18n.translate('en', 'truncated', 300), ' Processed up to the 300-item limit.');
 assert.equal(i18n.translate('ja', 'loadingStatus'), '全ての項目を読み込んでいます...');
 assert.deepEqual(chromeManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
 assert.deepEqual(firefoxManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
+assert.equal(chromeManifest.version, '0.1.5');
+assert.equal(firefoxManifest.version, '0.1.5');
 assert.equal(chromeManifest.name, '__MSG_extName__');
 assert.equal(chromeManifest.description, '__MSG_extDescription__');
 assert.equal(chromeManifest.default_locale, 'ja');
 assert.equal(chromeManifest.action.default_title, '__MSG_actionTitle__');
 assert.equal(firefoxManifest.default_locale, 'ja');
 assert.equal(jaLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(jaLocale.extDescription.message, /YouTube のプレイリスト再生/);
+assert.match(jaLocale.extDescription.message, /投稿日順やタイトル順/);
 assert.equal(enLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(enLocale.extDescription.message, /Sort visible YouTube playlist playback/);
+assert.match(enLocale.extDescription.message, /publish date or title/);
 assert.equal(firefoxManifest.browser_specific_settings.gecko.id, 'youtube-playlist-date-sorter@harness');
 assert.deepEqual(
   firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required,
   ['none']
 );
 assert.match(contentScript, /option value="native"/);
+assert.match(contentScript, /option value="title-asc"/);
+assert.doesNotMatch(contentScript, /option value="added-/);
+assert.doesNotMatch(contentScript, /extractAddedDateFromRow/);
+assert.match(contentScript, /function requiresPublishDates\(\)/);
+assert.match(contentScript, /function needsPublishDatesForCurrentItems\(\)/);
+assert.match(contentScript, /if \(needsPublishDatesForCurrentItems\(\)\) \{\s*refreshSortedItems\(\);\s*return;\s*\}/);
+assert.doesNotMatch(readFileSync('extension/shared/date-sorter.js', 'utf8'), /extractAddedDateFromText/);
+assert.doesNotMatch(readFileSync('extension/shared/i18n.js', 'utf8'), /visibleOrderFallback|addedAsc|addedDesc/);
 assert.match(contentScript, /clearSortState/);
 assert.match(readFileSync('extension/shared/date-sorter.js', 'utf8'), /window\.__YT_PDS__ = api/);
 assert.match(readFileSync('extension/shared/i18n.js', 'utf8'), /window\.__YT_PDS_I18N__ = api/);

@@ -144,6 +144,27 @@
     return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
   }
 
+  function normalizeSortOrder(order) {
+    if (order === 'native') return 'native';
+    if (order === 'desc') return 'desc';
+    if (order === 'title-asc' || order === 'title-desc') return order;
+    return 'asc';
+  }
+
+  function getSortKind(order) {
+    const normalized = normalizeSortOrder(order);
+    if (normalized === 'title-asc' || normalized === 'title-desc') return 'title';
+    if (normalized === 'native') return 'native';
+    return 'publish';
+  }
+
+  function sortItems(items, dateByVideoId, order) {
+    const normalized = normalizeSortOrder(order);
+    const kind = getSortKind(normalized);
+    if (kind === 'title') return sortItemsByTitle(items, normalized);
+    return sortItemsByPublishDate(items, dateByVideoId, normalized);
+  }
+
   function sortItemsByPublishDate(items, dateByVideoId, order) {
     const multiplier = order === 'desc' ? -1 : 1;
     return [...items].sort((a, b) => {
@@ -155,6 +176,28 @@
       if (aDate !== bDate) return (aDate - bDate) * multiplier;
       return a.originalIndex - b.originalIndex;
     });
+  }
+
+  function sortItemsByTitle(items, order) {
+    const multiplier = order === 'title-desc' ? -1 : 1;
+    return [...items].sort((a, b) => {
+      const compared = compareText(a.title, b.title);
+      if (compared !== 0) return compared * multiplier;
+      return a.originalIndex - b.originalIndex;
+    });
+  }
+
+  function compareText(left, right) {
+    const leftText = normalizeSortText(left);
+    const rightText = normalizeSortText(right);
+    return leftText.localeCompare(rightText, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+  }
+
+  function normalizeSortText(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
   function findNextVideoId(sortedItems, currentVideoId) {
@@ -170,6 +213,10 @@
     findNextVideoId,
     getPlaylistIdFromUrl,
     getVideoIdFromUrl,
+    getSortKind,
+    normalizeSortOrder,
+    sortItems,
     sortItemsByPublishDate,
+    sortItemsByTitle,
   };
 });
