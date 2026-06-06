@@ -4,7 +4,7 @@
     "description": "Extension name shown in the Chrome Web Store and extension manager"
   },
   "extDescription": {
-    "message": "Sort visible YouTube playlist playback by publish date or title and jump to the next video in that order.",
+    "message": "Sort visible YouTube playlist playback by publish date, title, or duration, and jump to the next video in that order.",
     "description": "Short description shown in the Chrome Web Store and extension manager"
   },
   "actionTitle": {

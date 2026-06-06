@@ -1,13 +1,13 @@
 # YouTube Playlist Date Sorter
 
-A browser extension for watching YouTube playlists in publish-date or title order.
+A browser extension for watching YouTube playlists in publish-date, title, or duration order.
 
-It reads the visible playlist items, fetches each video's publish date when needed, and sorts the on-page list by publish date or title. It does not modify the saved order of the playlist itself. The extension only controls the visible page order and the destination used by its "Next video" action.
+It reads the visible playlist items, fetches each video's publish date when needed, and sorts the on-page list by publish date, title, or duration. It does not modify the saved order of the playlist itself. The extension only controls the visible page order and the destination used by its "Next video" action.
 
 ## Features
 
 - Works on YouTube playlist pages and playlist watch pages
-- Switch between oldest first, newest first, title order, and YouTube's default order
+- Switch between oldest first, newest first, title order, shortest/longest first, and YouTube's default order
 - Jump to the next video in the selected order
 - Toggle automatic navigation
 - Switch the extension UI between Japanese and English

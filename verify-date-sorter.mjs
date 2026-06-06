@@ -190,6 +190,12 @@ assert.deepEqual(
 );
 assert.equal(sorter.normalizeSortOrder('bad-value'), 'asc');
 assert.equal(sorter.getSortKind('title-desc'), 'title');
+assert.equal(sorter.getSortKind('duration-asc'), 'duration');
+assert.equal(sorter.getSortKind('duration-desc'), 'duration');
+assert.equal(sorter.parseDurationSeconds('5:32'), 332);
+assert.equal(sorter.parseDurationSeconds('1:23:45'), 5025);
+assert.equal(sorter.parseDurationSeconds(''), Infinity);
+assert.equal(sorter.parseDurationSeconds('10:00'), 600);
 assert.deepEqual(
   sorter.sortItems(
     [
@@ -201,6 +207,30 @@ assert.deepEqual(
   ).map((item) => item.videoId),
   ['a', 'b']
 );
+assert.deepEqual(
+  sorter.sortItems(
+    [
+      { videoId: 'long', title: 'long', duration: '10:00', originalIndex: 0 },
+      { videoId: 'short', title: 'short', duration: '2:30', originalIndex: 1 },
+      { videoId: 'nodur', title: 'no duration', duration: '', originalIndex: 2 },
+    ],
+    {},
+    'duration-asc'
+  ).map((item) => item.videoId),
+  ['short', 'long', 'nodur']
+);
+assert.deepEqual(
+  sorter.sortItems(
+    [
+      { videoId: 'long', title: 'long', duration: '10:00', originalIndex: 0 },
+      { videoId: 'short', title: 'short', duration: '2:30', originalIndex: 1 },
+      { videoId: 'nodur', title: 'no duration', duration: '', originalIndex: 2 },
+    ],
+    {},
+    'duration-desc'
+  ).map((item) => item.videoId),
+  ['long', 'short', 'nodur']
+);
 
 assert.equal(i18n.normalizeLanguage('en'), 'en');
 assert.equal(i18n.normalizeLanguage('fr'), 'ja');
@@ -208,26 +238,30 @@ assert.equal(i18n.translate('en', 'sort'), 'Sort');
 assert.equal(i18n.translate('en', 'minimize'), 'Minimize');
 assert.equal(i18n.translate('en', 'normalOrder'), 'Default order');
 assert.equal(i18n.translate('en', 'titleAsc'), 'Title A-Z');
+assert.equal(i18n.translate('en', 'durationAsc'), 'Shortest first');
+assert.equal(i18n.translate('ja', 'durationAsc'), '短い動画から');
 assert.equal(i18n.translate('ja', 'expand'), '展開');
 assert.equal(i18n.translate('ja', 'nativeRestored'), 'YouTubeの通常順に戻しました。');
 assert.equal(i18n.translate('ja', 'badge', 2, '2024-03-05'), '投稿日順 #2 2024-03-05');
 assert.equal(i18n.translate('en', 'badge', 3, 'Video 2', 'title-asc'), 'Title order #3 Video 2');
+assert.equal(i18n.translate('en', 'badge', 1, '', 'duration-asc'), 'Duration order #1');
+assert.equal(i18n.translate('ja', 'badge', 2, '', 'duration-desc'), '時間順 #2');
 assert.equal(i18n.translate('ja', 'truncated', 300), ' 上限300件まで処理しました。');
 assert.equal(i18n.translate('en', 'truncated', 300), ' Processed up to the 300-item limit.');
 assert.equal(i18n.translate('ja', 'loadingStatus'), '全ての項目を読み込んでいます...');
 assert.deepEqual(chromeManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
 assert.deepEqual(firefoxManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
-assert.equal(chromeManifest.version, '0.1.5');
-assert.equal(firefoxManifest.version, '0.1.5');
+assert.equal(chromeManifest.version, '0.2.0');
+assert.equal(firefoxManifest.version, '0.2.0');
 assert.equal(chromeManifest.name, '__MSG_extName__');
 assert.equal(chromeManifest.description, '__MSG_extDescription__');
 assert.equal(chromeManifest.default_locale, 'ja');
 assert.equal(chromeManifest.action.default_title, '__MSG_actionTitle__');
 assert.equal(firefoxManifest.default_locale, 'ja');
 assert.equal(jaLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(jaLocale.extDescription.message, /投稿日順やタイトル順/);
+assert.match(jaLocale.extDescription.message, /投稿日順・タイトル順・再生時間順/);
 assert.equal(enLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(enLocale.extDescription.message, /publish date or title/);
+assert.match(enLocale.extDescription.message, /publish date, title, or duration/);
 assert.equal(firefoxManifest.browser_specific_settings.gecko.id, 'youtube-playlist-date-sorter@harness');
 assert.deepEqual(
   firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required,
@@ -235,6 +269,8 @@ assert.deepEqual(
 );
 assert.match(contentScript, /option value="native"/);
 assert.match(contentScript, /option value="title-asc"/);
+assert.match(contentScript, /option value="duration-asc"/);
+assert.match(contentScript, /option value="duration-desc"/);
 assert.doesNotMatch(contentScript, /option value="added-/);
 assert.doesNotMatch(contentScript, /extractAddedDateFromRow/);
 assert.match(contentScript, /function requiresPublishDates\(\)/);

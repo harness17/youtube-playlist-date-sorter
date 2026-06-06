@@ -148,12 +148,14 @@
     if (order === 'native') return 'native';
     if (order === 'desc') return 'desc';
     if (order === 'title-asc' || order === 'title-desc') return order;
+    if (order === 'duration-asc' || order === 'duration-desc') return order;
     return 'asc';
   }
 
   function getSortKind(order) {
     const normalized = normalizeSortOrder(order);
     if (normalized === 'title-asc' || normalized === 'title-desc') return 'title';
+    if (normalized === 'duration-asc' || normalized === 'duration-desc') return 'duration';
     if (normalized === 'native') return 'native';
     return 'publish';
   }
@@ -162,7 +164,29 @@
     const normalized = normalizeSortOrder(order);
     const kind = getSortKind(normalized);
     if (kind === 'title') return sortItemsByTitle(items, normalized);
+    if (kind === 'duration') return sortItemsByDuration(items, normalized);
     return sortItemsByPublishDate(items, dateByVideoId, normalized);
+  }
+
+  function parseDurationSeconds(text) {
+    if (!text) return Infinity;
+    const parts = String(text).trim().split(':').map(Number);
+    if (parts.length < 2 || parts.some(Number.isNaN)) return Infinity;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return parts[0] * 60 + parts[1];
+  }
+
+  function sortItemsByDuration(items, order) {
+    const multiplier = order === 'duration-desc' ? -1 : 1;
+    return [...items].sort((a, b) => {
+      const aSeconds = parseDurationSeconds(a.duration);
+      const bSeconds = parseDurationSeconds(b.duration);
+      const aUnknown = !Number.isFinite(aSeconds);
+      const bUnknown = !Number.isFinite(bSeconds);
+      if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
+      if (aSeconds !== bSeconds) return (aSeconds - bSeconds) * multiplier;
+      return a.originalIndex - b.originalIndex;
+    });
   }
 
   function sortItemsByPublishDate(items, dateByVideoId, order) {
@@ -215,7 +239,9 @@
     getVideoIdFromUrl,
     getSortKind,
     normalizeSortOrder,
+    parseDurationSeconds,
     sortItems,
+    sortItemsByDuration,
     sortItemsByPublishDate,
     sortItemsByTitle,
   };

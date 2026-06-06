@@ -142,6 +142,10 @@
       if (desc) desc.textContent = t('newestFirst');
       if (titleAsc) titleAsc.textContent = t('titleAsc');
       if (titleDesc) titleDesc.textContent = t('titleDesc');
+      const durationAsc = order.querySelector('option[value="duration-asc"]');
+      const durationDesc = order.querySelector('option[value="duration-desc"]');
+      if (durationAsc) durationAsc.textContent = t('durationAsc');
+      if (durationDesc) durationDesc.textContent = t('durationDesc');
       if (order.value !== state.order) order.value = state.order;
     }
     if (sortButton) sortButton.textContent = state.loading ? t('sorting') : t('sort');
@@ -192,6 +196,8 @@
           <option value="desc"></option>
           <option value="title-asc"></option>
           <option value="title-desc"></option>
+          <option value="duration-asc"></option>
+          <option value="duration-desc"></option>
         </select>
         <div class="ytpds-row">
           <button class="ytpds-button" type="button" data-ytpds-sort></button>
@@ -441,9 +447,16 @@
           ((titleNode.getAttribute && titleNode.getAttribute('title')) ||
             (titleNode.textContent || '').trim())) ||
         videoId;
+      const durationNode =
+        (row.querySelector &&
+          (row.querySelector('ytd-thumbnail-overlay-time-status-renderer #text') ||
+            row.querySelector('span.ytd-thumbnail-overlay-time-status-renderer'))) ||
+        null;
+      const duration = (durationNode && (durationNode.textContent || '').replace(/\s+/g, '').trim()) || '';
       items.push({
         videoId,
         title: String(rawTitle).replace(/\s+/g, ' ').trim(),
+        duration,
         originalIndex: items.length,
       });
     }
@@ -1273,6 +1286,7 @@
   function getBadgeDetail(item) {
     const sortKind = sorter.getSortKind(state.order);
     if (sortKind === 'title') return item.title || item.videoId;
+    if (sortKind === 'duration') return '';
     return state.dateByVideoId[item.videoId] || t('unknownDate');
   }
 
