@@ -38,13 +38,40 @@
     return url.toString();
   }
 
+  function normalizePlaylistRow(candidate) {
+    if (!candidate) return null;
+
+    let row = candidate;
+    const href =
+      (candidate.getAttribute && candidate.getAttribute('href')) ||
+      candidate.href ||
+      '';
+    const isWatchAnchor =
+      (candidate.matches && candidate.matches('a[href*="/watch"][href*="v="]')) ||
+      (String(href).includes('/watch') && String(href).includes('v='));
+    if (isWatchAnchor && candidate.closest) {
+      row =
+        candidate.closest(
+          'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer, yt-lockup-view-model'
+        ) || candidate;
+    }
+
+    // The current playlist page renders each lockup inside a sibling wrapper
+    // div. Moving the inner lockup leaves every item with a different parent,
+    // so use the wrapper as the sortable row.
+    if (row.matches && row.matches('yt-lockup-view-model')) {
+      return row.parentElement || row;
+    }
+    return row;
+  }
+
   function extractPlaylistItemsFromDocument(documentRef) {
     if (!documentRef) return [];
 
     const isPlaylistPage =
       documentRef.location && documentRef.location.pathname === '/playlist';
     const selector = isPlaylistPage
-      ? 'ytd-playlist-video-renderer a[href*="/watch"][href*="v="], ytd-playlist-video-list-renderer ytd-playlist-video-renderer a[href*="/watch"][href*="v="]'
+      ? 'ytd-playlist-video-renderer a[href*="/watch"][href*="v="], ytd-playlist-video-list-renderer ytd-playlist-video-renderer a[href*="/watch"][href*="v="], yt-item-section-renderer yt-lockup-view-model a[href*="/watch"][href*="v="]'
       : 'ytd-playlist-panel-video-renderer a[href*="/watch"][href*="v="], ytd-playlist-panel-video-wrapper-renderer a[href*="/watch"][href*="v="], ytd-playlist-panel-renderer a[href*="/watch"][href*="v="], ytd-playlist-video-renderer a[href*="/watch"][href*="v="]';
     const anchors = Array.from(documentRef.querySelectorAll(selector));
     const seen = new Set();
@@ -55,10 +82,11 @@
       if (!videoId || seen.has(videoId)) continue;
       seen.add(videoId);
 
-      const row = anchor.closest('ytd-playlist-panel-video-renderer, ytd-playlist-video-renderer') || anchor;
+      const row = normalizePlaylistRow(anchor);
       const titleNode =
         row.querySelector('#video-title') ||
         row.querySelector('[id="video-title"]') ||
+        row.querySelector('h3[title]') ||
         row.querySelector('span[title]') ||
         anchor;
       const title =
@@ -238,6 +266,7 @@
     getPlaylistIdFromUrl,
     getVideoIdFromUrl,
     getSortKind,
+    normalizePlaylistRow,
     normalizeSortOrder,
     parseDurationSeconds,
     sortItems,

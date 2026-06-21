@@ -8,6 +8,7 @@ const i18n = require('./extension/shared/i18n.js');
 
 const html = readFileSync('fixtures/watch-page.html', 'utf8');
 const contentScript = readFileSync('extension/content/content.js', 'utf8');
+const popupScript = readFileSync('extension/popup/popup.js', 'utf8');
 const contentCss = readFileSync('extension/content/content.css', 'utf8');
 const chromeManifest = JSON.parse(readFileSync('manifests/chrome.json', 'utf8'));
 const firefoxManifest = JSON.parse(readFileSync('manifests/firefox.json', 'utf8'));
@@ -20,6 +21,50 @@ assert.match(contentScript, /\.metadata-wrapper/);
 assert.match(contentScript, /ytpds-badge-overlay/);
 assert.match(contentScript, /mixed parents, decorated/);
 assert.match(contentScript, /localStorage\.getItem\('ytpds:debug'\)/);
+assert.match(contentScript, /return sorter\.normalizePlaylistRow\(candidate\);/);
+assert.match(contentCss, /yt-item-section-renderer \[data-ytpds-sorted='1'\]/);
+assert.match(
+  contentScript,
+  /row\.matches\('yt-lockup-view-model'\)[\s\S]*?row\.querySelector\('yt-lockup-view-model'\)/
+);
+assert.match(contentScript, /function applyLockupCssOrder\(/);
+assert.match(contentScript, /function clearLockupCssOrder\(/);
+assert.match(contentScript, /function getCurrentVisualOrder\(/);
+assert.match(
+  contentScript,
+  /if \(sortedRows\.every\(isLockupWrapperRow\)\) \{[\s\S]*?applyLockupCssOrder\(parent, desiredOrder, rowByVideoId\);/
+);
+assert.match(contentCss, /\.ytpds-lockup-list \{/);
+assert.match(contentCss, /order: var\(--ytpds-order\) !important;/);
+assert.match(contentScript, /\.ytLockupMetadataViewModelTextContainer/);
+assert.match(contentCss, /align-self: flex-start;/);
+assert.match(contentCss, /font-size: 10px;/);
+assert.match(contentCss, /padding: 1px 4px;/);
+assert.match(contentScript, /autoAdvance: true/);
+assert.match(
+  contentScript,
+  /state\.autoAdvance =\s*!saved \|\| typeof saved\.autoAdvance !== 'boolean' \? true : saved\.autoAdvance;/
+);
+assert.match(
+  contentScript,
+  /state\.autoAdvance = !state\.autoAdvance;[\s\S]*?saveSettings\(\);[\s\S]*?attachEndedHandler\(\);/
+);
+assert.match(
+  contentScript,
+  /panelCollapsed: state\.panelCollapsed,\s*autoAdvance: state\.autoAdvance,/
+);
+assert.match(
+  contentScript,
+  /const autoAdvanceChanged = nextAutoAdvance !== state\.autoAdvance;[\s\S]*?!languageChanged && !collapsedChanged && !autoAdvanceChanged/
+);
+assert.match(
+  popupScript,
+  /autoAdvance:\s*!settings \|\| typeof settings\.autoAdvance !== 'boolean' \? true : settings\.autoAdvance/
+);
+assert.match(
+  popupScript,
+  /panelCollapsed: saved\.panelCollapsed,\s*autoAdvance: saved\.autoAdvance,/
+);
 assert.match(contentScript, /mutations\.some\(shouldReapplyForMutation\)/);
 assert.match(contentScript, /function shouldReapplyForMutation/);
 assert.match(contentScript, /function scheduleSavedOrderRetries/);
@@ -133,6 +178,49 @@ const fakeDocument = {
 };
 assert.deepEqual(sorter.extractPlaylistItemsFromDocument(fakeDocument), [
   { videoId: 'first', title: 'First Stream', originalIndex: 0 },
+]);
+
+// Current playlist DOM: yt-lockup-view-model nodes live inside sibling wrapper
+// divs. The wrapper is the sortable row because all wrappers share one parent.
+const modernTitle = {
+  textContent: ' Modern Playlist Item ',
+  getAttribute(name) {
+    return name === 'title' ? 'Modern Playlist Item' : null;
+  },
+};
+const modernWrapper = {
+  querySelector(selector) {
+    if (selector === 'h3[title]') return modernTitle;
+    return null;
+  },
+};
+const modernLockup = {
+  parentElement: modernWrapper,
+  matches(selector) {
+    return selector === 'yt-lockup-view-model';
+  },
+};
+const modernAnchor = {
+  href: 'https://www.youtube.com/watch?v=modern&list=PLmodern&index=1',
+  closest() {
+    return modernLockup;
+  },
+  getAttribute(name) {
+    return name === 'href' ? this.href : null;
+  },
+  matches(selector) {
+    return selector === 'a[href*="/watch"][href*="v="]';
+  },
+};
+const modernDocument = {
+  location: { pathname: '/playlist' },
+  querySelectorAll() {
+    return [modernAnchor, modernAnchor];
+  },
+};
+assert.equal(sorter.normalizePlaylistRow(modernAnchor), modernWrapper);
+assert.deepEqual(sorter.extractPlaylistItemsFromDocument(modernDocument), [
+  { videoId: 'modern', title: 'Modern Playlist Item', originalIndex: 0 },
 ]);
 
 // Regression: extraction must not silently cap at ~100 rows. Given 150 unique
@@ -251,8 +339,8 @@ assert.equal(i18n.translate('en', 'truncated', 300), ' Processed up to the 300-i
 assert.equal(i18n.translate('ja', 'loadingStatus'), '全ての項目を読み込んでいます...');
 assert.deepEqual(chromeManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
 assert.deepEqual(firefoxManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
-assert.equal(chromeManifest.version, '0.2.0');
-assert.equal(firefoxManifest.version, '0.2.0');
+assert.equal(chromeManifest.version, '0.2.2');
+assert.equal(firefoxManifest.version, '0.2.2');
 assert.equal(chromeManifest.name, '__MSG_extName__');
 assert.equal(chromeManifest.description, '__MSG_extDescription__');
 assert.equal(chromeManifest.default_locale, 'ja');

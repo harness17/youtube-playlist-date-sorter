@@ -1,20 +1,24 @@
-# YouTube Playlist Date Sorter
+YouTube Playlist Date Sorter is a Chrome extension that sorts the videos displayed on YouTube playlist and playlist watch pages by publish date, title, or duration.
 
-A browser extension for watching YouTube playlists in publish-date, title, or duration order.
+You can sort a playlist by oldest or newest publish date, title, or shortest or longest duration, then navigate to the next video in the selected order. It does not use the YouTube Data API or require an API key. It works with information from the displayed page and, when sorting by publish date, publication information from each video's page.
 
-It reads the visible playlist items, fetches each video's publish date when needed, and sorts the on-page list by publish date, title, or duration. It does not modify the saved order of the playlist itself. The extension only controls the visible page order and the destination used by its "Next video" action.
+Main features:
+• Sort playlist videos by publish date, title, or duration
+• Switch between oldest-first and newest-first order
+• Switch between ascending and descending title order
+• Switch between shortest-first and longest-first duration order
+• Restore YouTube's default display order
+• Move to the next video in the selected order
+• Automatically navigate in the selected order when a video ends
+• Save the automatic navigation ON/OFF setting (ON by default)
+• Works on both playlist pages and playlist watch pages
+• Save sorting results separately for each playlist
+• Switch the interface between Japanese and English
 
-## Features
+This extension does not change the playlist's saved order or any data in your YouTube account. It only controls the order displayed on the page and the next-video navigation performed by the extension.
 
-- Works on YouTube playlist pages and playlist watch pages
-- Switch between oldest first, newest first, title order, shortest/longest first, and YouTube's default order
-- Jump to the next video in the selected order
-- Toggle automatic navigation
-- Switch the extension UI between Japanese and English
-- No YouTube Data API key required
-
-## Notes
-
-- Only playlist items loaded in the page DOM are included.
-- YouTube layout changes may temporarily affect date detection or sorting.
-- This extension is not an official YouTube feature.
+Notes:
+• Changes to YouTube's DOM structure may affect the extension
+• Only playlist items loaded on the page are included
+• Up to 300 items are processed in long playlists; items that have not been loaded may not be included
+• This extension is not an official YouTube feature
