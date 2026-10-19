@@ -47,11 +47,27 @@
     panelRemovalTimer: 0,
     reorderTimestamps: [],
     reorderGaveUp: false,
+    navigatingNext: false,
     truncatedTo: 0,
   };
 
   function isPlaylistWatchPage() {
     return Boolean(sorter.getVideoIdFromUrl(location.href) && sorter.getPlaylistIdFromUrl(location.href));
+  }
+
+  // YouTube plays pre-roll/mid-roll ads in the same <video> element as the
+  // main content. The ended/timeupdate events fire for ads too, so we must
+  // skip our advance logic while an ad is on screen.
+  function isAdShowing() {
+    const player = document.querySelector('#movie_player');
+    return Boolean(player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')));
+  }
+
+  // Auto-advance only follows an order the user actually applied. Sorting on
+  // `ended` while unsorted takes seconds; YouTube's native advance moves on
+  // meanwhile, and our late navigation then reloads (or skips past) that video.
+  function hasActiveSort() {
+    return state.sortedItems.length > 0 && state.order !== 'native';
   }
 
   function isSupportedPlaylistPage() {
@@ -1509,11 +1525,13 @@
     }, ms);
   }
 
-  async function goNextByPublishDate() {
+  async function goNextByPublishDate(fromVideoId) {
     if (state.sortedItems.length === 0) {
       await refreshSortedItems();
     }
-    const currentVideoId = sorter.getVideoIdFromUrl(location.href);
+    // fromVideoId captures the video id at event time, before YouTube's SPA
+    // navigation can change location.href in the ended/timeupdate race.
+    const currentVideoId = fromVideoId || sorter.getVideoIdFromUrl(location.href);
     const nextVideoId =
       currentVideoId && state.sortedItems.some((item) => item.videoId === currentVideoId)
         ? sorter.findNextVideoId(state.sortedItems, currentVideoId)
@@ -1530,21 +1548,40 @@
     const video = document.querySelector('video');
     if (!video || video.dataset.ytpdsEndedBound === '1') return;
     video.dataset.ytpdsEndedBound = '1';
-    // Pause 1.5 s before the end when autoAdvance is OFF.
-    // YouTube's auto-advance is driven by the `ended` event (fires 7.6 s countdown).
-    // `ended` only fires when currentTime reaches duration, so pausing here prevents it.
-    // 0.1 s was too tight: timeupdate fires every ~250 ms, so the last event could land
-    // at the same instant as `ended` — stopImmediatePropagation was also ineffective
-    // because YouTube registers its listener before content scripts load.
+    // Pause 1.5 s before the end to suppress YouTube's native auto-advance.
+    // YouTube's auto-advance is driven by the `ended` event; pausing before
+    // currentTime reaches duration prevents it from firing.
+    // When autoAdvance is ON and we have a custom sort, we pause AND navigate
+    // ourselves — this prevents the double-skip caused by both YouTube's native
+    // advance and ours racing on the same `ended` event.
     video.addEventListener('timeupdate', () => {
-      if (!state.autoAdvance && !video.paused && video.duration > 0 && video.duration - video.currentTime < 1.5) {
+      if (video.paused || !(video.duration > 0) || video.duration - video.currentTime >= 1.5) return;
+      if (isAdShowing()) return;
+      if (!state.autoAdvance) {
         video.pause();
+        return;
+      }
+      if (hasActiveSort() && isPlaylistWatchPage() && !state.navigatingNext) {
+        const currentVideoId = sorter.getVideoIdFromUrl(location.href);
+        const nextVideoId = currentVideoId
+          ? sorter.findNextVideoId(state.sortedItems, currentVideoId)
+          : '';
+        if (nextVideoId) {
+          state.navigatingNext = true;
+          video.pause();
+          debugLog('pre-end advance', { from: currentVideoId, to: nextVideoId, remaining: video.duration - video.currentTime });
+          goNextByPublishDate(currentVideoId);
+        }
       }
     });
+    // Fallback: if ended fires (e.g. timeupdate didn't catch a very short video),
+    // navigate ourselves. The navigatingNext guard prevents double navigation.
     video.addEventListener('ended', () => {
-      if (state.autoAdvance && isPlaylistWatchPage()) {
-        goNextByPublishDate();
-      }
+      if (!state.autoAdvance || !hasActiveSort() || !isPlaylistWatchPage() || state.navigatingNext) return;
+      if (isAdShowing()) return;
+      const fromVideoId = sorter.getVideoIdFromUrl(location.href);
+      debugLog('ended advance', { from: fromVideoId });
+      goNextByPublishDate(fromVideoId);
     });
   }
 
@@ -1552,6 +1589,7 @@
     const urlChanged = state.lastUrl !== location.href;
     const pathChanged = state.lastPathname !== location.pathname;
     if (urlChanged) {
+      state.navigatingNext = false;
       state.lastUrl = location.href;
     }
     if (pathChanged) {

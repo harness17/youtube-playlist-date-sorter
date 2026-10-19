@@ -366,6 +366,26 @@ assert.match(contentScript, /function needsPublishDatesForCurrentItems\(\)/);
 assert.match(contentScript, /if \(needsPublishDatesForCurrentItems\(\)\) \{\s*refreshSortedItems\(\);\s*return;\s*\}/);
 assert.doesNotMatch(readFileSync('extension/shared/date-sorter.js', 'utf8'), /extractAddedDateFromText/);
 assert.doesNotMatch(readFileSync('extension/shared/i18n.js', 'utf8'), /visibleOrderFallback|addedAsc|addedDesc/);
+// Ad guard: skip advance logic during pre-roll/mid-roll ads
+assert.match(contentScript, /function isAdShowing\(\)/);
+assert.match(contentScript, /ad-showing/);
+assert.match(contentScript, /ad-interrupting/);
+assert.match(contentScript, /if \(isAdShowing\(\)\) return;/);
+// Captured video id: pass fromVideoId to avoid location.href race
+assert.match(contentScript, /async function goNextByPublishDate\(fromVideoId\)/);
+assert.match(contentScript, /const currentVideoId = fromVideoId \|\| sorter\.getVideoIdFromUrl\(location\.href\);/);
+// navigatingNext guard prevents double navigation
+assert.match(contentScript, /navigatingNext: false/);
+assert.match(contentScript, /state\.navigatingNext = true;/);
+assert.match(contentScript, /state\.navigatingNext = false;/);
+// Unsorted playback must not sort-then-navigate on `ended` (reloads the video
+// YouTube already advanced to). Auto-advance only runs with an applied sort.
+assert.match(contentScript, /function hasActiveSort\(\) \{\s*return state\.sortedItems\.length > 0 && state\.order !== 'native';/);
+assert.match(contentScript, /if \(hasActiveSort\(\) && isPlaylistWatchPage\(\) && !state\.navigatingNext\)/);
+assert.match(contentScript, /if \(!state\.autoAdvance \|\| !hasActiveSort\(\) \|\| !isPlaylistWatchPage\(\) \|\| state\.navigatingNext\) return;/);
+// Pre-end advance checks for next video before pausing
+assert.match(contentScript, /const nextVideoId = currentVideoId[\s\S]*?sorter\.findNextVideoId/);
+assert.match(contentScript, /if \(nextVideoId\) \{[\s\S]*?state\.navigatingNext = true;[\s\S]*?video\.pause\(\);/);
 assert.match(contentScript, /clearSortState/);
 assert.match(readFileSync('extension/shared/date-sorter.js', 'utf8'), /window\.__YT_PDS__ = api/);
 assert.match(readFileSync('extension/shared/i18n.js', 'utf8'), /window\.__YT_PDS_I18N__ = api/);
