@@ -21,6 +21,8 @@
       newestFirst: '新しい投稿日から',
       titleAsc: 'タイトル A-Z',
       titleDesc: 'タイトル Z-A',
+      durationAsc: '短い動画から',
+      durationDesc: '長い動画から',
       sort: '並び替え',
       sorting: '並び替え中...',
       next: '次の動画へ',
@@ -49,14 +51,21 @@
         if (sortKind === 'title') {
           return `${count}件を${order === 'title-desc' ? 'タイトル降順' : 'タイトル昇順'}に準備済み。`;
         }
+        if (sortKind === 'duration') {
+          return `${count}件を${order === 'duration-desc' ? '長い動画から' : '短い動画から'}順に準備済み。`;
+        }
         return `${count}件を${order === 'desc' ? '新しい' : '古い'}投稿日順に準備済み。投稿日取得 ${known}/${count}。${detail}${last}`;
       },
       unknownDate: '日付不明',
       badge(index, detail, order) {
+        const suffix = detail ? ` ${detail}` : '';
         if (order === 'title-asc' || order === 'title-desc') {
-          return `タイトル順 #${index} ${detail}`;
+          return `タイトル順 #${index}${suffix}`;
         }
-        return `投稿日順 #${index} ${detail}`;
+        if (order === 'duration-asc' || order === 'duration-desc') {
+          return `時間順 #${index}${suffix}`;
+        }
+        return `投稿日順 #${index}${suffix}`;
       },
       saved(count) {
         return `${count}件の保存済み並び替えがあります。表示するには「並び替え」を押してください。`;
@@ -78,6 +87,8 @@
       newestFirst: 'Newest first',
       titleAsc: 'Title A-Z',
       titleDesc: 'Title Z-A',
+      durationAsc: 'Shortest first',
+      durationDesc: 'Longest first',
       sort: 'Sort',
       sorting: 'Sorting...',
       next: 'Next video',
@@ -106,14 +117,21 @@
         if (sortKind === 'title') {
           return `${count} videos ready in ${order === 'title-desc' ? 'title descending' : 'title ascending'} order.`;
         }
+        if (sortKind === 'duration') {
+          return `${count} videos ready in ${order === 'duration-desc' ? 'longest' : 'shortest'} first order.`;
+        }
         return `${count} videos ready in ${order === 'desc' ? 'newest' : 'oldest'} publish-date order. Dates fetched ${known}/${count}.${detail}${last}`;
       },
       unknownDate: 'unknown date',
       badge(index, detail, order) {
+        const suffix = detail ? ` ${detail}` : '';
         if (order === 'title-asc' || order === 'title-desc') {
-          return `Title order #${index} ${detail}`;
+          return `Title order #${index}${suffix}`;
         }
-        return `Publish order #${index} ${detail}`;
+        if (order === 'duration-asc' || order === 'duration-desc') {
+          return `Duration order #${index}${suffix}`;
+        }
+        return `Publish order #${index}${suffix}`;
       },
       saved(count) {
         return `${count} saved sorted items found. Press "Sort" to show badges.`;

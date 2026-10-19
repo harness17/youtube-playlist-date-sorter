@@ -145,8 +145,18 @@
 }
 
 ytd-playlist-panel-video-renderer[data-ytpds-sorted='1'],
-ytd-playlist-video-renderer[data-ytpds-sorted='1'] {
+ytd-playlist-video-renderer[data-ytpds-sorted='1'],
+yt-item-section-renderer [data-ytpds-sorted='1'] {
   position: relative;
+}
+
+.ytpds-lockup-list {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.ytpds-lockup-list > .ytpds-lockup-row {
+  order: var(--ytpds-order) !important;
 }
 
 ytd-playlist-panel-video-wrapper-renderer[data-ytpds-sorted='1'] {
@@ -154,7 +164,8 @@ ytd-playlist-panel-video-wrapper-renderer[data-ytpds-sorted='1'] {
 }
 
 ytd-playlist-panel-video-renderer.ytpds-current-video,
-ytd-playlist-video-renderer.ytpds-current-video {
+ytd-playlist-video-renderer.ytpds-current-video,
+yt-item-section-renderer .ytpds-current-video {
   outline: 2px solid #0f766e;
   outline-offset: -2px;
   background: rgba(15, 118, 110, 0.1);
@@ -162,18 +173,21 @@ ytd-playlist-video-renderer.ytpds-current-video {
 
 .ytpds-date-badge {
   display: inline-flex;
+  flex: 0 0 auto;
+  align-self: flex-start;
   align-items: center;
   width: fit-content;
-  max-width: 100%;
+  max-width: min(100%, 240px);
   box-sizing: border-box;
-  margin-top: 4px;
-  padding: 2px 6px;
-  border-radius: 6px;
+  margin-top: 2px;
+  padding: 1px 4px;
+  border-radius: 4px;
   background: #e0f2f1;
   color: #0f4f49;
   font-family: Arial, sans-serif;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.2;
   white-space: normal;
 }
 

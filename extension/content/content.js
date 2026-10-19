@@ -14,12 +14,12 @@
   const CACHED_APPLY_STEP_MS = 500;
   const SETTINGS_KEY = 'ytpds:settings';
   const PLAYLIST_ROW_SELECTOR =
-    'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer';
+    'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer, yt-lockup-view-model';
   const state = {
     order: 'asc',
     language: 'ja',
     panelCollapsed: false,
-    autoAdvance: false,
+    autoAdvance: true,
     sortedItems: [],
     dateByVideoId: Object.create(null),
     fetchStats: { ok: 0, httpError: 0, noDate: 0, networkError: 0 },
@@ -47,11 +47,35 @@
     panelRemovalTimer: 0,
     reorderTimestamps: [],
     reorderGaveUp: false,
+    navigatingNext: false,
     truncatedTo: 0,
   };
 
   function isPlaylistWatchPage() {
     return Boolean(sorter.getVideoIdFromUrl(location.href) && sorter.getPlaylistIdFromUrl(location.href));
+  }
+
+  // YouTube plays pre-roll/mid-roll ads in the same <video> element as the
+  // main content. The ended/timeupdate events fire for ads too, so we must
+  // skip our advance logic while an ad is on screen.
+  function isAdShowing() {
+    const player = document.querySelector('#movie_player');
+    return Boolean(player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')));
+  }
+
+  // A live stream's duration keeps growing while playback sits at the live
+  // edge, so the "under 1.5 s left" check holds constantly and would pause or
+  // advance mid-broadcast. `.ytp-live-badge` exists (hidden) on VODs too, so
+  // only the time display's `ytp-live` class identifies a live stream.
+  function isLiveNow() {
+    return Boolean(document.querySelector('#movie_player .ytp-time-display.ytp-live'));
+  }
+
+  // Auto-advance only follows an order the user actually applied. Sorting on
+  // `ended` while unsorted takes seconds; YouTube's native advance moves on
+  // meanwhile, and our late navigation then reloads (or skips past) that video.
+  function hasActiveSort() {
+    return state.sortedItems.length > 0 && state.order !== 'native';
   }
 
   function isSupportedPlaylistPage() {
@@ -142,6 +166,10 @@
       if (desc) desc.textContent = t('newestFirst');
       if (titleAsc) titleAsc.textContent = t('titleAsc');
       if (titleDesc) titleDesc.textContent = t('titleDesc');
+      const durationAsc = order.querySelector('option[value="duration-asc"]');
+      const durationDesc = order.querySelector('option[value="duration-desc"]');
+      if (durationAsc) durationAsc.textContent = t('durationAsc');
+      if (durationDesc) durationDesc.textContent = t('durationDesc');
       if (order.value !== state.order) order.value = state.order;
     }
     if (sortButton) sortButton.textContent = state.loading ? t('sorting') : t('sort');
@@ -192,6 +220,8 @@
           <option value="desc"></option>
           <option value="title-asc"></option>
           <option value="title-desc"></option>
+          <option value="duration-asc"></option>
+          <option value="duration-desc"></option>
         </select>
         <div class="ytpds-row">
           <button class="ytpds-button" type="button" data-ytpds-sort></button>
@@ -243,6 +273,7 @@
     panel.querySelector('[data-ytpds-auto]').addEventListener('click', (event) => {
       state.autoAdvance = !state.autoAdvance;
       event.currentTarget.textContent = t('auto', state.autoAdvance);
+      saveSettings();
       attachEndedHandler();
     });
 
@@ -434,16 +465,24 @@
       if (!videoId || seen.has(videoId)) continue;
       seen.add(videoId);
       const titleNode =
-        (row.querySelector && (row.querySelector('#video-title') || row.querySelector('span[title]'))) ||
+        (row.querySelector && (row.querySelector('#video-title') || row.querySelector('h3[title]') || row.querySelector('span[title]'))) ||
         null;
       const rawTitle =
         (titleNode &&
           ((titleNode.getAttribute && titleNode.getAttribute('title')) ||
             (titleNode.textContent || '').trim())) ||
         videoId;
+      const durationNode =
+        (row.querySelector &&
+          (row.querySelector('ytd-thumbnail-overlay-time-status-renderer #text') ||
+            row.querySelector('span.ytd-thumbnail-overlay-time-status-renderer') ||
+            row.querySelector('badge-shape'))) ||
+        null;
+      const duration = (durationNode && (durationNode.textContent || '').replace(/\s+/g, '').trim()) || '';
       items.push({
         videoId,
         title: String(rawTitle).replace(/\s+/g, ' ').trim(),
+        duration,
         originalIndex: items.length,
       });
     }
@@ -537,7 +576,7 @@
 
     const playlistRoot =
       lastRow.closest &&
-      lastRow.closest('ytd-playlist-video-list-renderer, ytd-playlist-panel-renderer');
+      lastRow.closest('ytd-playlist-video-list-renderer, ytd-playlist-panel-renderer, yt-section-list-renderer, yt-item-section-renderer');
     if (playlistRoot) {
       add(playlistRoot);
       for (const selector of ['#contents', '#items']) {
@@ -621,6 +660,8 @@
         ? [
             'ytd-playlist-video-renderer',
             'ytd-playlist-video-list-renderer ytd-playlist-video-renderer',
+            // 2025+ YouTube DOM: playlist items are yt-lockup-view-model inside yt-item-section-renderer
+            'yt-item-section-renderer yt-lockup-view-model',
           ]
         : [
             'ytd-playlist-panel-video-renderer',
@@ -643,15 +684,7 @@
   }
 
   function normalizePlaylistRow(candidate) {
-    if (!candidate) return null;
-    if (candidate.matches && candidate.matches('a[href*="/watch"][href*="v="]')) {
-      return (
-        candidate.closest(
-          'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer'
-        ) || candidate
-      );
-    }
-    return candidate;
+    return sorter.normalizePlaylistRow(candidate);
   }
 
   function getVideoIdFromRow(row) {
@@ -707,6 +740,18 @@
     const desiredOrder = state.sortedItems
       .filter((item) => rowByVideoId.has(item.videoId))
       .map((item) => item.videoId);
+    if (sortedRows.every(isLockupWrapperRow)) {
+      applyLockupCssOrder(parent, desiredOrder, rowByVideoId);
+      state.reorderTimestamps = [];
+      state.reorderGaveUp = false;
+      if (state.badgesEnabled) {
+        decorateRows(rowByVideoId);
+      }
+      setDebug(`visual rows=${rows.length}, matched=${sortedRows.length}, css sorted`, {
+        badgeCount: document.querySelectorAll('.ytpds-date-badge').length,
+      });
+      return;
+    }
     // Compare only the sorted videos' relative order. Rows that are not part of
     // the sorted set (duplicates, unfetchable, lazily added) must be excluded,
     // otherwise the length mismatch makes sameOrder() never converge and the
@@ -778,6 +823,56 @@
         state.applyingVisualOrder = false;
       }, 300);
     }
+  }
+
+  function isLockupWrapperRow(row) {
+    return Boolean(
+      row &&
+        row.firstElementChild &&
+        row.firstElementChild.matches &&
+        row.firstElementChild.matches('yt-lockup-view-model')
+    );
+  }
+
+  function applyLockupCssOrder(parent, desiredOrder, rowByVideoId) {
+    const orderByVideoId = new Map(
+      desiredOrder.map((videoId, index) => [videoId, index])
+    );
+    parent.classList.add('ytpds-lockup-list');
+    let unmatchedIndex = desiredOrder.length;
+    for (const row of Array.from(parent.children)) {
+      if (!isLockupWrapperRow(row)) continue;
+      const videoId = getVideoIdFromRow(row);
+      const order = orderByVideoId.has(videoId)
+        ? orderByVideoId.get(videoId)
+        : unmatchedIndex++;
+      row.classList.add('ytpds-lockup-row');
+      row.style.setProperty('--ytpds-order', String(order));
+    }
+  }
+
+  function clearLockupCssOrder() {
+    for (const parent of document.querySelectorAll('.ytpds-lockup-list')) {
+      parent.classList.remove('ytpds-lockup-list');
+      for (const row of parent.querySelectorAll('.ytpds-lockup-row')) {
+        row.classList.remove('ytpds-lockup-row');
+        row.style.removeProperty('--ytpds-order');
+      }
+    }
+  }
+
+  function getCurrentVisualOrder(parent, desiredSet) {
+    const rows = Array.from(parent.children).filter((node) =>
+      desiredSet.has(getVideoIdFromRow(node))
+    );
+    if (parent.classList.contains('ytpds-lockup-list')) {
+      rows.sort((left, right) => {
+        const leftOrder = Number(left.style.getPropertyValue('--ytpds-order'));
+        const rightOrder = Number(right.style.getPropertyValue('--ytpds-order'));
+        return leftOrder - rightOrder;
+      });
+    }
+    return rows.map((node) => getVideoIdFromRow(node));
   }
 
   function sameOrder(left, right) {
@@ -879,6 +974,9 @@
     clearCachedSortApply();
     clearSavedOrderRetries();
     state.visualMode = 'idle';
+    // Modern playlist rows keep their native DOM order and are sorted only by
+    // CSS, so removing these properties restores YouTube's order immediately.
+    clearLockupCssOrder();
     applyOrderByItems(
       [...state.sortedItems].sort((left, right) => left.originalIndex - right.originalIndex),
       'native order'
@@ -917,9 +1015,7 @@
     }
 
     const desiredSet = new Set(desiredOrder);
-    const currentOrder = Array.from(parent.children)
-      .filter((node) => desiredSet.has(getVideoIdFromRow(node)))
-      .map((node) => getVideoIdFromRow(node));
+    const currentOrder = getCurrentVisualOrder(parent, desiredSet);
     if (sameOrder(currentOrder, desiredOrder)) {
       debugLog(`${reason} already applied`, {
         rows: rows.length,
@@ -954,7 +1050,7 @@
   function pruneOrphanBadges(decoratedVideoIds) {
     for (const badge of document.querySelectorAll('.ytpds-date-badge')) {
       const row = badge.closest(
-        'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer, a[href*="/watch"][href*="v="]'
+        'ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer, ytd-playlist-video-renderer, ytd-rich-item-renderer, yt-lockup-view-model, a[href*="/watch"][href*="v="]'
       );
       const videoId = getVideoIdFromRow(row);
       if (!row || !decoratedVideoIds.has(videoId)) {
@@ -983,10 +1079,15 @@
     const isWatchPanelRow =
       row.matches &&
       row.matches('ytd-playlist-panel-video-renderer, ytd-playlist-panel-video-wrapper-renderer');
+    const isLockupRow =
+      (row.matches && row.matches('yt-lockup-view-model')) ||
+      Boolean(row.querySelector && row.querySelector('yt-lockup-view-model'));
     const target = row.querySelector(
       isWatchPanelRow
         ? '#meta, .metadata-wrapper, .metadata-info, #byline-container, #byline, #video-info, #details, .metadata'
-        : '#meta, #byline-container, #video-info, .metadata, #video-title'
+        : isLockupRow
+          ? '.ytLockupMetadataViewModelTextContainer, yt-lockup-metadata-view-model, #meta, #byline-container, #video-info'
+          : '#meta, #byline-container, #video-info, .metadata, #video-title'
     );
 
     if (target) {
@@ -999,6 +1100,7 @@
     const root =
       document.querySelector('ytd-playlist-panel-renderer') ||
       document.querySelector('ytd-playlist-video-list-renderer') ||
+      document.querySelector('yt-item-section-renderer') ||
       document;
     if (state.visualObserver && state.visualObserverRoot === root) return;
     if (state.visualObserver) {
@@ -1124,9 +1226,7 @@
     }
 
     const desiredSet = new Set(desiredOrder);
-    const currentOrder = Array.from(parent.children)
-      .filter((node) => desiredSet.has(getVideoIdFromRow(node)))
-      .map((node) => getVideoIdFromRow(node));
+    const currentOrder = getCurrentVisualOrder(parent, desiredSet);
 
     return {
       rows,
@@ -1205,6 +1305,8 @@
     const saved = await storageGet(SETTINGS_KEY);
     state.language = i18n.normalizeLanguage(saved && saved.language);
     state.panelCollapsed = Boolean(saved && saved.panelCollapsed);
+    state.autoAdvance =
+      !saved || typeof saved.autoAdvance !== 'boolean' ? true : saved.autoAdvance;
     ensurePanel();
     updatePanelCollapsedUi();
     refreshPanelText();
@@ -1217,6 +1319,7 @@
     await storageSet(SETTINGS_KEY, {
       language: state.language,
       panelCollapsed: state.panelCollapsed,
+      autoAdvance: state.autoAdvance,
     });
   }
 
@@ -1235,11 +1338,17 @@
       if (areaName !== 'local' || !changed || !changed.newValue) return;
       const nextLanguage = i18n.normalizeLanguage(changed.newValue.language);
       const nextPanelCollapsed = Boolean(changed.newValue.panelCollapsed);
+      const nextAutoAdvance =
+        typeof changed.newValue.autoAdvance !== 'boolean'
+          ? true
+          : changed.newValue.autoAdvance;
       const languageChanged = nextLanguage !== state.language;
       const collapsedChanged = nextPanelCollapsed !== state.panelCollapsed;
-      if (!languageChanged && !collapsedChanged) return;
+      const autoAdvanceChanged = nextAutoAdvance !== state.autoAdvance;
+      if (!languageChanged && !collapsedChanged && !autoAdvanceChanged) return;
       state.language = nextLanguage;
       state.panelCollapsed = nextPanelCollapsed;
+      state.autoAdvance = nextAutoAdvance;
       ensurePanel();
       updatePanelCollapsedUi();
       refreshPanelText();
@@ -1273,6 +1382,7 @@
   function getBadgeDetail(item) {
     const sortKind = sorter.getSortKind(state.order);
     if (sortKind === 'title') return item.title || item.videoId;
+    if (sortKind === 'duration') return '';
     return state.dateByVideoId[item.videoId] || t('unknownDate');
   }
 
@@ -1423,11 +1533,13 @@
     }, ms);
   }
 
-  async function goNextByPublishDate() {
+  async function goNextByPublishDate(fromVideoId) {
     if (state.sortedItems.length === 0) {
       await refreshSortedItems();
     }
-    const currentVideoId = sorter.getVideoIdFromUrl(location.href);
+    // fromVideoId captures the video id at event time, before YouTube's SPA
+    // navigation can change location.href in the ended/timeupdate race.
+    const currentVideoId = fromVideoId || sorter.getVideoIdFromUrl(location.href);
     const nextVideoId =
       currentVideoId && state.sortedItems.some((item) => item.videoId === currentVideoId)
         ? sorter.findNextVideoId(state.sortedItems, currentVideoId)
@@ -1444,21 +1556,42 @@
     const video = document.querySelector('video');
     if (!video || video.dataset.ytpdsEndedBound === '1') return;
     video.dataset.ytpdsEndedBound = '1';
-    // Pause 1.5 s before the end when autoAdvance is OFF.
-    // YouTube's auto-advance is driven by the `ended` event (fires 7.6 s countdown).
-    // `ended` only fires when currentTime reaches duration, so pausing here prevents it.
-    // 0.1 s was too tight: timeupdate fires every ~250 ms, so the last event could land
-    // at the same instant as `ended` — stopImmediatePropagation was also ineffective
-    // because YouTube registers its listener before content scripts load.
+    // Pause 1.5 s before the end to suppress YouTube's native auto-advance.
+    // YouTube's auto-advance is driven by the `ended` event; pausing before
+    // currentTime reaches duration prevents it from firing.
+    // When autoAdvance is ON and we have a custom sort, we pause AND navigate
+    // ourselves — this prevents the double-skip caused by both YouTube's native
+    // advance and ours racing on the same `ended` event.
     video.addEventListener('timeupdate', () => {
-      if (!state.autoAdvance && !video.paused && video.duration > 0 && video.duration - video.currentTime < 1.5) {
+      if (video.paused || !(video.duration > 0) || video.duration - video.currentTime >= 1.5) return;
+      if (isAdShowing()) return;
+      if (isLiveNow()) return;
+      if (!state.autoAdvance) {
         video.pause();
+        return;
+      }
+      if (hasActiveSort() && isPlaylistWatchPage() && !state.navigatingNext) {
+        const currentVideoId = sorter.getVideoIdFromUrl(location.href);
+        const nextVideoId = currentVideoId
+          ? sorter.findNextVideoId(state.sortedItems, currentVideoId)
+          : '';
+        if (nextVideoId) {
+          state.navigatingNext = true;
+          video.pause();
+          debugLog('pre-end advance', { from: currentVideoId, to: nextVideoId, remaining: video.duration - video.currentTime });
+          goNextByPublishDate(currentVideoId);
+        }
       }
     });
+    // Fallback: if ended fires (e.g. timeupdate didn't catch a very short video),
+    // navigate ourselves. The navigatingNext guard prevents double navigation.
     video.addEventListener('ended', () => {
-      if (state.autoAdvance && isPlaylistWatchPage()) {
-        goNextByPublishDate();
-      }
+      if (!state.autoAdvance || !hasActiveSort() || !isPlaylistWatchPage() || state.navigatingNext) return;
+      if (isAdShowing()) return;
+      if (isLiveNow()) return;
+      const fromVideoId = sorter.getVideoIdFromUrl(location.href);
+      debugLog('ended advance', { from: fromVideoId });
+      goNextByPublishDate(fromVideoId);
     });
   }
 
@@ -1466,6 +1599,7 @@
     const urlChanged = state.lastUrl !== location.href;
     const pathChanged = state.lastPathname !== location.pathname;
     if (urlChanged) {
+      state.navigatingNext = false;
       state.lastUrl = location.href;
     }
     if (pathChanged) {
@@ -1473,6 +1607,7 @@
     }
     const playlistId = sorter.getPlaylistIdFromUrl(location.href);
     if (playlistId !== state.playlistId) {
+      clearLockupCssOrder();
       state.playlistId = playlistId;
       state.sortedItems = [];
       state.restoredPlaylistId = '';

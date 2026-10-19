@@ -1,8 +1,13 @@
 # YouTube Playlist Date Sorter
 
-YouTube のプレイリストページとプレイリスト再生ページで、表示中の動画を投稿日順またはタイトル順に並び替え、その順序で次の動画へ移動するブラウザ拡張です。
+YouTube のプレイリストページとプレイリスト再生ページで、表示中の動画を投稿日順・タイトル順・再生時間順に並び替え、その順序で次の動画へ移動するブラウザ拡張です。
 
-## 使い方
+## インストール
+
+- [Chrome Web Store](https://chromewebstore.google.com/detail/youtube-playlist-date-sor/hobigboofokgcnjfobilijbknbmemlbd)
+- [Firefox Add-ons](https://addons.mozilla.org/ja/firefox/addon/youtube-playlist-date-sorter/)
+
+## 開発用の読み込み
 
 1. `chrome://extensions/` を開く
 2. デベロッパーモードをオン
@@ -28,6 +33,8 @@ Firefox は `.\scripts\build-dev.ps1 -Target all` を実行し、`about:debuggin
 - 並び替え結果は playlist ID 単位で保存し、同じプレイリストの再生画面へ移動したときに復元します。
 - 表示言語は拡張全体の設定として保存します。
 - パネルの最小化状態は保存し、再読み込み後も維持します。
+- 自動移動は初期状態で ON になり、ON / OFF の選択は次の動画や再読み込み後も維持します。
+- 自動移動は並び替えを適用しているときだけ動作します。未適用のときは YouTube 標準の順で再生します。広告の再生中と配信中のライブでは、自動移動も終了前の一時停止も行いません。
 
 ## 検証
 

@@ -8,6 +8,7 @@ const i18n = require('./extension/shared/i18n.js');
 
 const html = readFileSync('fixtures/watch-page.html', 'utf8');
 const contentScript = readFileSync('extension/content/content.js', 'utf8');
+const popupScript = readFileSync('extension/popup/popup.js', 'utf8');
 const contentCss = readFileSync('extension/content/content.css', 'utf8');
 const chromeManifest = JSON.parse(readFileSync('manifests/chrome.json', 'utf8'));
 const firefoxManifest = JSON.parse(readFileSync('manifests/firefox.json', 'utf8'));
@@ -20,6 +21,50 @@ assert.match(contentScript, /\.metadata-wrapper/);
 assert.match(contentScript, /ytpds-badge-overlay/);
 assert.match(contentScript, /mixed parents, decorated/);
 assert.match(contentScript, /localStorage\.getItem\('ytpds:debug'\)/);
+assert.match(contentScript, /return sorter\.normalizePlaylistRow\(candidate\);/);
+assert.match(contentCss, /yt-item-section-renderer \[data-ytpds-sorted='1'\]/);
+assert.match(
+  contentScript,
+  /row\.matches\('yt-lockup-view-model'\)[\s\S]*?row\.querySelector\('yt-lockup-view-model'\)/
+);
+assert.match(contentScript, /function applyLockupCssOrder\(/);
+assert.match(contentScript, /function clearLockupCssOrder\(/);
+assert.match(contentScript, /function getCurrentVisualOrder\(/);
+assert.match(
+  contentScript,
+  /if \(sortedRows\.every\(isLockupWrapperRow\)\) \{[\s\S]*?applyLockupCssOrder\(parent, desiredOrder, rowByVideoId\);/
+);
+assert.match(contentCss, /\.ytpds-lockup-list \{/);
+assert.match(contentCss, /order: var\(--ytpds-order\) !important;/);
+assert.match(contentScript, /\.ytLockupMetadataViewModelTextContainer/);
+assert.match(contentCss, /align-self: flex-start;/);
+assert.match(contentCss, /font-size: 10px;/);
+assert.match(contentCss, /padding: 1px 4px;/);
+assert.match(contentScript, /autoAdvance: true/);
+assert.match(
+  contentScript,
+  /state\.autoAdvance =\s*!saved \|\| typeof saved\.autoAdvance !== 'boolean' \? true : saved\.autoAdvance;/
+);
+assert.match(
+  contentScript,
+  /state\.autoAdvance = !state\.autoAdvance;[\s\S]*?saveSettings\(\);[\s\S]*?attachEndedHandler\(\);/
+);
+assert.match(
+  contentScript,
+  /panelCollapsed: state\.panelCollapsed,\s*autoAdvance: state\.autoAdvance,/
+);
+assert.match(
+  contentScript,
+  /const autoAdvanceChanged = nextAutoAdvance !== state\.autoAdvance;[\s\S]*?!languageChanged && !collapsedChanged && !autoAdvanceChanged/
+);
+assert.match(
+  popupScript,
+  /autoAdvance:\s*!settings \|\| typeof settings\.autoAdvance !== 'boolean' \? true : settings\.autoAdvance/
+);
+assert.match(
+  popupScript,
+  /panelCollapsed: saved\.panelCollapsed,\s*autoAdvance: saved\.autoAdvance,/
+);
 assert.match(contentScript, /mutations\.some\(shouldReapplyForMutation\)/);
 assert.match(contentScript, /function shouldReapplyForMutation/);
 assert.match(contentScript, /function scheduleSavedOrderRetries/);
@@ -135,6 +180,49 @@ assert.deepEqual(sorter.extractPlaylistItemsFromDocument(fakeDocument), [
   { videoId: 'first', title: 'First Stream', originalIndex: 0 },
 ]);
 
+// Current playlist DOM: yt-lockup-view-model nodes live inside sibling wrapper
+// divs. The wrapper is the sortable row because all wrappers share one parent.
+const modernTitle = {
+  textContent: ' Modern Playlist Item ',
+  getAttribute(name) {
+    return name === 'title' ? 'Modern Playlist Item' : null;
+  },
+};
+const modernWrapper = {
+  querySelector(selector) {
+    if (selector === 'h3[title]') return modernTitle;
+    return null;
+  },
+};
+const modernLockup = {
+  parentElement: modernWrapper,
+  matches(selector) {
+    return selector === 'yt-lockup-view-model';
+  },
+};
+const modernAnchor = {
+  href: 'https://www.youtube.com/watch?v=modern&list=PLmodern&index=1',
+  closest() {
+    return modernLockup;
+  },
+  getAttribute(name) {
+    return name === 'href' ? this.href : null;
+  },
+  matches(selector) {
+    return selector === 'a[href*="/watch"][href*="v="]';
+  },
+};
+const modernDocument = {
+  location: { pathname: '/playlist' },
+  querySelectorAll() {
+    return [modernAnchor, modernAnchor];
+  },
+};
+assert.equal(sorter.normalizePlaylistRow(modernAnchor), modernWrapper);
+assert.deepEqual(sorter.extractPlaylistItemsFromDocument(modernDocument), [
+  { videoId: 'modern', title: 'Modern Playlist Item', originalIndex: 0 },
+]);
+
 // Regression: extraction must not silently cap at ~100 rows. Given 150 unique
 // anchors (mimicking a fully loaded 150-item playlist) it returns all 150.
 const manyAnchors = Array.from({ length: 150 }, (_unused, index) => {
@@ -190,6 +278,12 @@ assert.deepEqual(
 );
 assert.equal(sorter.normalizeSortOrder('bad-value'), 'asc');
 assert.equal(sorter.getSortKind('title-desc'), 'title');
+assert.equal(sorter.getSortKind('duration-asc'), 'duration');
+assert.equal(sorter.getSortKind('duration-desc'), 'duration');
+assert.equal(sorter.parseDurationSeconds('5:32'), 332);
+assert.equal(sorter.parseDurationSeconds('1:23:45'), 5025);
+assert.equal(sorter.parseDurationSeconds(''), Infinity);
+assert.equal(sorter.parseDurationSeconds('10:00'), 600);
 assert.deepEqual(
   sorter.sortItems(
     [
@@ -201,6 +295,30 @@ assert.deepEqual(
   ).map((item) => item.videoId),
   ['a', 'b']
 );
+assert.deepEqual(
+  sorter.sortItems(
+    [
+      { videoId: 'long', title: 'long', duration: '10:00', originalIndex: 0 },
+      { videoId: 'short', title: 'short', duration: '2:30', originalIndex: 1 },
+      { videoId: 'nodur', title: 'no duration', duration: '', originalIndex: 2 },
+    ],
+    {},
+    'duration-asc'
+  ).map((item) => item.videoId),
+  ['short', 'long', 'nodur']
+);
+assert.deepEqual(
+  sorter.sortItems(
+    [
+      { videoId: 'long', title: 'long', duration: '10:00', originalIndex: 0 },
+      { videoId: 'short', title: 'short', duration: '2:30', originalIndex: 1 },
+      { videoId: 'nodur', title: 'no duration', duration: '', originalIndex: 2 },
+    ],
+    {},
+    'duration-desc'
+  ).map((item) => item.videoId),
+  ['long', 'short', 'nodur']
+);
 
 assert.equal(i18n.normalizeLanguage('en'), 'en');
 assert.equal(i18n.normalizeLanguage('fr'), 'ja');
@@ -208,26 +326,30 @@ assert.equal(i18n.translate('en', 'sort'), 'Sort');
 assert.equal(i18n.translate('en', 'minimize'), 'Minimize');
 assert.equal(i18n.translate('en', 'normalOrder'), 'Default order');
 assert.equal(i18n.translate('en', 'titleAsc'), 'Title A-Z');
+assert.equal(i18n.translate('en', 'durationAsc'), 'Shortest first');
+assert.equal(i18n.translate('ja', 'durationAsc'), '短い動画から');
 assert.equal(i18n.translate('ja', 'expand'), '展開');
 assert.equal(i18n.translate('ja', 'nativeRestored'), 'YouTubeの通常順に戻しました。');
 assert.equal(i18n.translate('ja', 'badge', 2, '2024-03-05'), '投稿日順 #2 2024-03-05');
 assert.equal(i18n.translate('en', 'badge', 3, 'Video 2', 'title-asc'), 'Title order #3 Video 2');
+assert.equal(i18n.translate('en', 'badge', 1, '', 'duration-asc'), 'Duration order #1');
+assert.equal(i18n.translate('ja', 'badge', 2, '', 'duration-desc'), '時間順 #2');
 assert.equal(i18n.translate('ja', 'truncated', 300), ' 上限300件まで処理しました。');
 assert.equal(i18n.translate('en', 'truncated', 300), ' Processed up to the 300-item limit.');
 assert.equal(i18n.translate('ja', 'loadingStatus'), '全ての項目を読み込んでいます...');
 assert.deepEqual(chromeManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
 assert.deepEqual(firefoxManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
-assert.equal(chromeManifest.version, '0.1.5');
-assert.equal(firefoxManifest.version, '0.1.5');
+assert.equal(chromeManifest.version, '0.2.3');
+assert.equal(firefoxManifest.version, '0.2.3');
 assert.equal(chromeManifest.name, '__MSG_extName__');
 assert.equal(chromeManifest.description, '__MSG_extDescription__');
 assert.equal(chromeManifest.default_locale, 'ja');
 assert.equal(chromeManifest.action.default_title, '__MSG_actionTitle__');
 assert.equal(firefoxManifest.default_locale, 'ja');
 assert.equal(jaLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(jaLocale.extDescription.message, /投稿日順やタイトル順/);
+assert.match(jaLocale.extDescription.message, /投稿日順・タイトル順・再生時間順/);
 assert.equal(enLocale.extName.message, 'YouTube Playlist Date Sorter');
-assert.match(enLocale.extDescription.message, /publish date or title/);
+assert.match(enLocale.extDescription.message, /publish date, title, or duration/);
 assert.equal(firefoxManifest.browser_specific_settings.gecko.id, 'youtube-playlist-date-sorter@harness');
 assert.deepEqual(
   firefoxManifest.browser_specific_settings.gecko.data_collection_permissions.required,
@@ -235,6 +357,8 @@ assert.deepEqual(
 );
 assert.match(contentScript, /option value="native"/);
 assert.match(contentScript, /option value="title-asc"/);
+assert.match(contentScript, /option value="duration-asc"/);
+assert.match(contentScript, /option value="duration-desc"/);
 assert.doesNotMatch(contentScript, /option value="added-/);
 assert.doesNotMatch(contentScript, /extractAddedDateFromRow/);
 assert.match(contentScript, /function requiresPublishDates\(\)/);
@@ -242,6 +366,31 @@ assert.match(contentScript, /function needsPublishDatesForCurrentItems\(\)/);
 assert.match(contentScript, /if \(needsPublishDatesForCurrentItems\(\)\) \{\s*refreshSortedItems\(\);\s*return;\s*\}/);
 assert.doesNotMatch(readFileSync('extension/shared/date-sorter.js', 'utf8'), /extractAddedDateFromText/);
 assert.doesNotMatch(readFileSync('extension/shared/i18n.js', 'utf8'), /visibleOrderFallback|addedAsc|addedDesc/);
+// Ad guard: skip advance logic during pre-roll/mid-roll ads
+assert.match(contentScript, /function isAdShowing\(\)/);
+assert.match(contentScript, /ad-showing/);
+assert.match(contentScript, /ad-interrupting/);
+assert.match(contentScript, /if \(isAdShowing\(\)\) return;/);
+// Live guard: a growing live duration keeps "near the end" true, so both the
+// timeupdate (pause / pre-end advance) and ended handlers must skip live streams.
+assert.match(contentScript, /function isLiveNow\(\) \{\s*return Boolean\(document\.querySelector\('#movie_player \.ytp-time-display\.ytp-live'\)\);/);
+assert.match(contentScript, /addEventListener\('timeupdate'[\s\S]*?if \(isLiveNow\(\)\) return;\s*if \(!state\.autoAdvance\)/);
+assert.match(contentScript, /addEventListener\('ended'[\s\S]*?if \(isLiveNow\(\)\) return;\s*const fromVideoId/);
+// Captured video id: pass fromVideoId to avoid location.href race
+assert.match(contentScript, /async function goNextByPublishDate\(fromVideoId\)/);
+assert.match(contentScript, /const currentVideoId = fromVideoId \|\| sorter\.getVideoIdFromUrl\(location\.href\);/);
+// navigatingNext guard prevents double navigation
+assert.match(contentScript, /navigatingNext: false/);
+assert.match(contentScript, /state\.navigatingNext = true;/);
+assert.match(contentScript, /state\.navigatingNext = false;/);
+// Unsorted playback must not sort-then-navigate on `ended` (reloads the video
+// YouTube already advanced to). Auto-advance only runs with an applied sort.
+assert.match(contentScript, /function hasActiveSort\(\) \{\s*return state\.sortedItems\.length > 0 && state\.order !== 'native';/);
+assert.match(contentScript, /if \(hasActiveSort\(\) && isPlaylistWatchPage\(\) && !state\.navigatingNext\)/);
+assert.match(contentScript, /if \(!state\.autoAdvance \|\| !hasActiveSort\(\) \|\| !isPlaylistWatchPage\(\) \|\| state\.navigatingNext\) return;/);
+// Pre-end advance checks for next video before pausing
+assert.match(contentScript, /const nextVideoId = currentVideoId[\s\S]*?sorter\.findNextVideoId/);
+assert.match(contentScript, /if \(nextVideoId\) \{[\s\S]*?state\.navigatingNext = true;[\s\S]*?video\.pause\(\);/);
 assert.match(contentScript, /clearSortState/);
 assert.match(readFileSync('extension/shared/date-sorter.js', 'utf8'), /window\.__YT_PDS__ = api/);
 assert.match(readFileSync('extension/shared/i18n.js', 'utf8'), /window\.__YT_PDS_I18N__ = api/);

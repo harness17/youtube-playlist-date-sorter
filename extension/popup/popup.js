@@ -30,6 +30,8 @@
     return {
       language: i18n.normalizeLanguage(settings && settings.language),
       panelCollapsed: Boolean(settings && settings.panelCollapsed),
+      autoAdvance:
+        !settings || typeof settings.autoAdvance !== 'boolean' ? true : settings.autoAdvance,
     };
   }
 
@@ -86,6 +88,7 @@
     const settings = {
       language: i18n.normalizeLanguage(event.target.value),
       panelCollapsed: saved.panelCollapsed,
+      autoAdvance: saved.autoAdvance,
     };
     render(settings);
     try {
