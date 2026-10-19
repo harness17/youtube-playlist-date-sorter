@@ -371,6 +371,11 @@ assert.match(contentScript, /function isAdShowing\(\)/);
 assert.match(contentScript, /ad-showing/);
 assert.match(contentScript, /ad-interrupting/);
 assert.match(contentScript, /if \(isAdShowing\(\)\) return;/);
+// Live guard: a growing live duration keeps "near the end" true, so both the
+// timeupdate (pause / pre-end advance) and ended handlers must skip live streams.
+assert.match(contentScript, /function isLiveNow\(\) \{\s*return Boolean\(document\.querySelector\('#movie_player \.ytp-time-display\.ytp-live'\)\);/);
+assert.match(contentScript, /addEventListener\('timeupdate'[\s\S]*?if \(isLiveNow\(\)\) return;\s*if \(!state\.autoAdvance\)/);
+assert.match(contentScript, /addEventListener\('ended'[\s\S]*?if \(isLiveNow\(\)\) return;\s*const fromVideoId/);
 // Captured video id: pass fromVideoId to avoid location.href race
 assert.match(contentScript, /async function goNextByPublishDate\(fromVideoId\)/);
 assert.match(contentScript, /const currentVideoId = fromVideoId \|\| sorter\.getVideoIdFromUrl\(location\.href\);/);

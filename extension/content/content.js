@@ -63,6 +63,14 @@
     return Boolean(player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')));
   }
 
+  // A live stream's duration keeps growing while playback sits at the live
+  // edge, so the "under 1.5 s left" check holds constantly and would pause or
+  // advance mid-broadcast. `.ytp-live-badge` exists (hidden) on VODs too, so
+  // only the time display's `ytp-live` class identifies a live stream.
+  function isLiveNow() {
+    return Boolean(document.querySelector('#movie_player .ytp-time-display.ytp-live'));
+  }
+
   // Auto-advance only follows an order the user actually applied. Sorting on
   // `ended` while unsorted takes seconds; YouTube's native advance moves on
   // meanwhile, and our late navigation then reloads (or skips past) that video.
@@ -1557,6 +1565,7 @@
     video.addEventListener('timeupdate', () => {
       if (video.paused || !(video.duration > 0) || video.duration - video.currentTime >= 1.5) return;
       if (isAdShowing()) return;
+      if (isLiveNow()) return;
       if (!state.autoAdvance) {
         video.pause();
         return;
@@ -1579,6 +1588,7 @@
     video.addEventListener('ended', () => {
       if (!state.autoAdvance || !hasActiveSort() || !isPlaylistWatchPage() || state.navigatingNext) return;
       if (isAdShowing()) return;
+      if (isLiveNow()) return;
       const fromVideoId = sorter.getVideoIdFromUrl(location.href);
       debugLog('ended advance', { from: fromVideoId });
       goNextByPublishDate(fromVideoId);
