@@ -339,8 +339,8 @@ assert.equal(i18n.translate('en', 'truncated', 300), ' Processed up to the 300-i
 assert.equal(i18n.translate('ja', 'loadingStatus'), '全ての項目を読み込んでいます...');
 assert.deepEqual(chromeManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
 assert.deepEqual(firefoxManifest.content_scripts[0].matches, ['https://www.youtube.com/*']);
-assert.equal(chromeManifest.version, '0.2.2');
-assert.equal(firefoxManifest.version, '0.2.2');
+assert.equal(chromeManifest.version, '0.2.3');
+assert.equal(firefoxManifest.version, '0.2.3');
 assert.equal(chromeManifest.name, '__MSG_extName__');
 assert.equal(chromeManifest.description, '__MSG_extDescription__');
 assert.equal(chromeManifest.default_locale, 'ja');
